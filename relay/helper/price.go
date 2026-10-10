@@ -1,7 +1,9 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -64,8 +66,57 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
+// requestImageSize 从请求体里读图片生成的 size（如 "1024x1024" / "auto"）。
+//
+// 用 common.GetRequestBody 取，它会 seek 到 0 并返回可复用的 BodyStorage，
+// 读完自己 seek 回 0，不影响后续的转发读取。读不到就返回空串，
+// 调用方会退回模型的固定价。
+func requestImageSize(c *gin.Context) string {
+	seeker, err := common.GetRequestBody(c)
+	if err != nil {
+		return ""
+	}
+	if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+		return ""
+	}
+	reader, ok := seeker.(io.Reader)
+	if !ok {
+		return ""
+	}
+	body, err := io.ReadAll(reader)
+	// 复位，后面还要把请求体转发给上游
+	_, _ = seeker.Seek(0, io.SeekStart)
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	var payload struct {
+		Size string `json:"size"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return payload.Size
+}
+
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+
+	// 图片模型按输出规格定价：上游对同一模型的不同尺寸收费不同
+	// （如 apimaster 的 gpt-image-2：1K $0.0075 / 4K $0.030），
+	// 只按单一固定价收会在尺寸不一致时亏钱。这里用请求里的 size 覆盖固定价。
+	if sizePrices, ok := ratio_setting.GetImageSizePrice(info.OriginModelName); ok {
+		if size := requestImageSize(c); size != "" {
+			if p, variant, matched := ratio_setting.MatchImageSizeVariant(size, sizePrices); matched {
+				modelPrice = p
+				usePrice = true
+				if common.DebugEnabled {
+					println(fmt.Sprintf(
+						"image size pricing: model=%s size=%s variant=%s price=%f",
+						info.OriginModelName, size, variant, p))
+				}
+			}
+		}
+	}
 
 	groupRatioInfo := HandleGroupRatio(c, info)
 

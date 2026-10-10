@@ -488,10 +488,9 @@ APIMaster 便宜优先，所以**常态成本 = 最低价**。
 
 **已知的两处取舍**（脚本已标注）：
 
-1. **16 个图片模型有 1K/2K/4K 多档价**，而本系统的固定价是「每次一个价」——
-   按 1K 定价会在大尺寸上亏（保守可用 `--variant max`）
+1. **16 个图片模型有 1K/2K/4K 多档价** —— 已通过新增 `ImageSizePrice` 解决（见下）
 2. **9 个分段/表达式计费模型**（`billing_mode = tiered_expr`，如 `gpt-5.6-sol`）
-   无法用单一 ratio/price 表达，脚本**跳过**，需人工处理
+   无法用单一 ratio/price 表达 —— 已改为同步表达式本体（见下）
 
 用法：
 
@@ -500,6 +499,50 @@ python3 ops/sync-upstream-pricing.py                    # dry-run，只打印
 python3 ops/sync-upstream-pricing.py --markup 1.25      # 加价 25%
 python3 ops/sync-upstream-pricing.py --markup 1.25 --apply
 ```
+
+### 新增：`ImageSizePrice` —— 图片按输出规格定价（2026-10-10 本 fork 新增）
+
+**问题**：本系统一个模型只有一个固定价，但上游对同一模型的不同尺寸收不同的钱
+（apimaster 的 `media_pricing.billing_prices` 给了 0.5K/1K/2K/4K 四档）。
+只按一个价收，客户传大尺寸就亏、传小尺寸就贵。把尺寸拆成不同模型名（用 model_mapping）
+**防不住**——客户调 `-1k` 却传 `size: 2048x2048` 时，照样按 1K 收。
+
+**做法**（改动很小，集中在 4 个文件）：
+
+| 文件 | 改动 |
+|---|---|
+| `setting/ratio_setting/image_size_price.go` | **新增**。`{模型: {规格: 单价USD}}` 的存储 + `MatchImageSizeVariant(size, prices)` 按长边归类 |
+| `model/option.go` | 注册 option `ImageSizePrice`（读 + 写两处） |
+| `controller/option.go` | 把 `ImageSizePrice` 加进可写键列表 |
+| `relay/helper/price.go` | `ModelPriceHelper` 里：若模型配了尺寸价，就用请求体的 `size` 覆盖固定价 |
+
+规格按**长边像素**归类：`<=640 → 0.5K`、`<=1280 → 1K`、`<=2560 → 2K`、`更大 → 4K`；
+该档没配价就向下找最接近的可用档；`size` 为空/`auto`/解析不出来，则用价表最低档。
+
+**实测**（`gpt-image-2-fd`，同一模型两种尺寸）：
+
+```
+size=1024x1024  →  quota 11719 = $0.023438   （1K 价 ×1.25）
+size=4096x4096  →  quota 28125 = $0.056250   （4K 价 ×1.25）
+```
+
+> ⚠️ 上游的「规格名」不全是尺寸：`midjourney-v8.2` 是 `fast/relax/turbo`、
+> `doubao-seedream-5-0-pro` 是 `Image Output / High-Resolution Image Output`。
+> 这些匹配不上尺寸档位，会兜底到价表最低档 —— 对 MJ 这类有自己的
+> relay 路径的模型影响有限，但**大尺寸输出仍有薄利风险**，必要时改回单一固定价。
+
+### 分段表达式同步（原为跳过，现已支持）
+
+本 fork 有同款表达式引擎（`pkg/billingexpr`，变量 `p` / `c` / `len` / `cr` / `cc` / `cc1h`），
+与 apimaster 的表达式语法一致，所以直接照搬 `billing_mode` + `billing_expr`，
+并**只把价格系数放大、阈值不动**（正则只匹配 `变量 * 数字`，不会误伤 `len <= 272000`）：
+
+```
+原: len <= 272000 ? tier("standard", p * 2   + c * 12  + cr * 0.2  + cc * 2.5  ) : ...
+新: len <= 272000 ? tier("standard", p * 2.5 + c * 15  + cr * 0.25 + cc * 3.125) : ...
+```
+
+9 个分段模型全部同步（写入 `billing_setting.billing_mode` / `billing_setting.billing_expr`）。
 
 ### 运维用的管理员 API 令牌
 

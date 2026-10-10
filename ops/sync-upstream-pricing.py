@@ -136,7 +136,7 @@ def main():
     names = [x["model_name"] for x in pricing]
 
     def market(m):
-        """返回 (模型, 基准价, 计价单位, 规格数)。
+        """返回 (模型, 计价单位, {规格: 价格})。
 
         ⚠️ 关键：marketplace 的 `user_price` 单位随模型类型变化
           - 有 `media_pricing` → 按张（unit=image），价格是「每张」
@@ -145,7 +145,7 @@ def main():
         """
         try:
             d = get_json(f"{UPSTREAM}/api/public/marketplace?model={urllib.parse.quote(m)}")["data"]
-            cands = []
+            per_channel = []   # [(排序价, {规格: 价})]
             for c in d:
                 mp = c.get("media_pricing")
                 if mp:
@@ -153,29 +153,37 @@ def main():
                     if not prices:
                         continue
                     base_variant = mp.get("base_variant") or sorted(prices)[0]
-                    if args.variant == "max":
-                        price = max(prices.values())
-                    else:
-                        price = prices.get(base_variant) or sorted(prices.values())[0]
-                    cands.append((price, "image", len(prices)))
+                    # 渠道之间用「基准规格价」比高低；选定渠道后，各规格价一起带走
+                    key = prices.get(base_variant) or min(prices.values())
+                    per_channel.append((key, prices))
                 elif c.get("user_price") is not None:
-                    cands.append((c["user_price"], "token", 1))
-            if not cands:
-                return m, None, None, 0
-            cands.sort(key=lambda x: x[0])
-            pick = {"min": cands[0], "max": cands[-1],
-                    "median": cands[len(cands) // 2]}[args.base]
-            return m, pick[0], pick[1], pick[2]
+                    per_channel.append((c["user_price"], {"_token": c["user_price"]}))
+            if not per_channel:
+                return m, None, None
+            per_channel.sort(key=lambda x: x[0])
+            unit = "image" if "_token" not in per_channel[0][1] else "token"
+            pick = {"min": per_channel[0], "max": per_channel[-1],
+                    "median": per_channel[len(per_channel) // 2]}[args.base]
+            return m, unit, pick[1]
         except Exception:
-            return m, None, None, 0
+            return m, None, None
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-        mk = {r[0]: (r[1], r[2], r[3]) for r in ex.map(market, names)}
-    base_price = {k: v[0] for k, v in mk.items()}
-    unit_of = {k: v[1] for k, v in mk.items()}
-    variants_of = {k: v[2] for k, v in mk.items()}
+        mk = {r[0]: (r[1], r[2]) for r in ex.map(market, names)}
+    unit_of = {k: v[0] for k, v in mk.items()}
+    prices_of = {k: v[1] for k, v in mk.items()}
+    base_price = {}
+    for k, v in prices_of.items():
+        if not v:
+            base_price[k] = None
+        elif args.variant == "max":
+            base_price[k] = max(v.values())
+        else:
+            base_price[k] = v.get("1K", min(v.values()))
+    variants_of = {k: (len(v) if v else 0) for k, v in prices_of.items()}
 
     model_price, model_ratio, rel_ratio = {}, {}, {}
+    image_size_price = {}
     billing_mode, billing_expr = {}, {}
     missing, skipped, multi_variant, expr_models = [], [], [], []
     for item in pricing:
@@ -198,10 +206,17 @@ def main():
             expr_models.append(m)
             continue
         if unit_of.get(m) == "image" or item.get("quota_type") == 1:
-            # 按张计费 → 用本系统的固定价 ModelPrice（每次调用收这么多）
-            model_price[m] = price
-            if variants_of.get(m, 1) > 1:
+            # 按张计费。若上游给了多档规格价（1K/2K/4K），写进 ImageSizePrice，
+            # 让计费时按请求的 size 取价；否则退回到单一固定价 ModelPrice。
+            prices = prices_of.get(m) or {}
+            multi = {k: v for k, v in prices.items() if k != "_token"}
+            if len(multi) > 1:
+                image_size_price[m] = {k: round(v * args.markup, 8) for k, v in multi.items()}
+                # 同时给一个保底价：size 解析不出来时用它
+                model_price[m] = price
                 multi_variant.append(m)
+            else:
+                model_price[m] = price
         else:
             # 按 token 计费：marketplace 给的是 $/M 输入价，本系统 $/M = 2 × model_ratio
             model_ratio[m] = round(price / 2.0, 8)
@@ -242,6 +257,8 @@ def main():
               "按 1K 定价会在大尺寸上亏。要保守就用 --variant max。")
 
     payload = {"ModelPrice": model_price, "ModelRatio": model_ratio}
+    if image_size_price:
+        payload["ImageSizePrice"] = image_size_price
     if billing_mode:
         payload["billing_setting.billing_mode"] = billing_mode
         payload["billing_setting.billing_expr"] = billing_expr
@@ -313,6 +330,12 @@ def main():
         print(f"写入 {key}: {len(mapping)} 项")
         res = put_option(key, mapping)
         print("  →", res.get("success"), res.get("message", ""))
+    if image_size_price:
+        print(f"写入 ImageSizePrice: {len(image_size_price)} 项（按输出规格定价）")
+        res = put_option("ImageSizePrice", image_size_price)
+        print("  →", res.get("success"), res.get("message", ""))
+        for m in list(image_size_price)[:2]:
+            print(f"     {m}: {image_size_price[m]}")
     for key, mapping in (("billing_setting.billing_mode", billing_mode),
                          ("billing_setting.billing_expr", billing_expr)):
         if not mapping:

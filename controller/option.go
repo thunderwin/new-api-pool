@@ -23,6 +23,7 @@ var completionRatioMetaOptionKeys = []string{
 	"CacheRatio",
 	"CreateCacheRatio",
 	"ImageRatio",
+	"ImageSizePrice",
 	"AudioRatio",
 	"AudioCompletionRatio",
 }
