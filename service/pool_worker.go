@@ -21,6 +21,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -230,7 +232,11 @@ func incrementRecipeCounter(key string, success bool) {
 	if success {
 		col = "success_count"
 	}
-	model.DB.Exec(fmt.Sprintf("UPDATE pool_recipes SET %s = %s + 1 WHERE `key` = ?", col, col), key)
+	// 不要拼 `key` = ? ：PostgreSQL 把反引号当运算符，直接语法错误。
+	// 交给 GORM 按方言引用标识符。（col 取值只有上面两个常量，无注入面）
+	model.DB.Model(&model.PoolRecipe{}).
+		Where(map[string]interface{}{"key": key}).
+		UpdateColumn(col, gorm.Expr(col+" + 1"))
 }
 
 // 帮助函数：从 OptionMap 拿 int，缺省 fallback

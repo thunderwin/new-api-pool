@@ -61,6 +61,17 @@ func initCol() {
 	//common.SysLog("Using Log SQL Type: " + common.LogSqlType)
 }
 
+// GroupCol / KeyCol / LogGroupCol 把方言正确的标识符引用暴露给别的包
+// （controller/pool.go 一类需要手写 SQL 片段的地方）。
+//
+// ⚠️ 千万不要在 SQL 里硬写反引号：PostgreSQL 把 ` 当**运算符字符**（MySQL 才当
+// 标识符引号），`` WHERE `group` = ? `` 会被解析成「运算符 group 运算符 = ?」，
+// 直接报 syntax error at or near "="。`group` / `key` 在两边都是关键字，必须引用，
+// 所以这里统一按当前方言取正确的引号形式。
+func GroupCol() string    { return commonGroupCol }
+func KeyCol() string      { return commonKeyCol }
+func LogGroupCol() string { return logGroupCol }
+
 var DB *gorm.DB
 
 var LOG_DB *gorm.DB

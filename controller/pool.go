@@ -66,7 +66,7 @@ func GetPoolOverview(c *gin.Context) {
 	var todayRevenue float64
 	model.DB.Model(&model.TopUp{}).
 		Select("COALESCE(SUM(amount),0)").
-		Where("created_time >= ? AND status = 'success'", todayStart).
+		Where("create_time >= ? AND status = 'success'", todayStart).
 		Row().Scan(&todayRevenue)
 
 	// 用户消耗（quota）转 USD：1 USD = QuotaPerUnit
@@ -113,8 +113,8 @@ func GetPoolOverview(c *gin.Context) {
 	}
 	var groups []groupRow
 	model.DB.Model(&model.Channel{}).
-		Select("`group` as `group`, COUNT(*) as channels").
-		Group("`group`").
+		Select(model.GroupCol() + " as " + model.GroupCol() + ", COUNT(*) as channels").
+		Group(model.GroupCol()).
 		Order("channels DESC").
 		Limit(10).
 		Scan(&groups)
@@ -124,10 +124,10 @@ func GetPoolOverview(c *gin.Context) {
 		// 失败率：今日该 group 的 failure / requests
 		var gReq, gFail int64
 		model.LOG_DB.Model(&model.Log{}).
-			Where("created_at >= ? AND type = ? AND `group` = ?", todayStart, model.LogTypeConsume, g.Group).
+			Where("created_at >= ? AND type = ? AND "+model.LogGroupCol()+" = ?", todayStart, model.LogTypeConsume, g.Group).
 			Count(&gReq)
 		model.LOG_DB.Model(&model.Log{}).
-			Where("created_at >= ? AND type = ? AND `group` = ?", todayStart, model.LogTypeError, g.Group).
+			Where("created_at >= ? AND type = ? AND "+model.LogGroupCol()+" = ?", todayStart, model.LogTypeError, g.Group).
 			Count(&gFail)
 		failRate := 0.0
 		if gReq > 0 {
@@ -791,7 +791,7 @@ func ManualSubmitJobResult(c *gin.Context) {
 		"by_user":         getUserId(c),
 	})
 	_ = job.UpdateStatus(model.PoolJobStatusSuccess, string(resultJSON), "")
-	model.DB.Model(&model.PoolRecipe{}).Where("`key` = ?", r.Key).
+	model.DB.Model(&model.PoolRecipe{}).Where(model.KeyCol()+" = ?", r.Key).
 		UpdateColumn("success_count", model.DB.Raw("success_count + 1"))
 
 	common.ApiSuccess(c, gin.H{
@@ -999,10 +999,10 @@ func ReceivePoolJobCallback(c *gin.Context) {
 	}
 	// 成功统计 + 1
 	if body.Status == model.PoolJobStatusSuccess {
-		model.DB.Model(&model.PoolRecipe{}).Where("`key` = ?", job.RecipeKey).
+		model.DB.Model(&model.PoolRecipe{}).Where(model.KeyCol()+" = ?", job.RecipeKey).
 			UpdateColumn("success_count", model.DB.Raw("success_count + 1"))
 	} else if body.Status == model.PoolJobStatusFailed {
-		model.DB.Model(&model.PoolRecipe{}).Where("`key` = ?", job.RecipeKey).
+		model.DB.Model(&model.PoolRecipe{}).Where(model.KeyCol()+" = ?", job.RecipeKey).
 			UpdateColumn("failure_count", model.DB.Raw("failure_count + 1"))
 	}
 	common.ApiSuccess(c, gin.H{"updated": true})
@@ -1033,7 +1033,7 @@ func GetPoolBillingSummary(c *gin.Context) {
 	var revenue float64
 	model.DB.Model(&model.TopUp{}).
 		Select("COALESCE(SUM(amount),0)").
-		Where("created_time >= ? AND status = 'success'", startTs).
+		Where("create_time >= ? AND status = 'success'", startTs).
 		Row().Scan(&revenue)
 
 	// 用户消耗（按 quota 转 USD）
@@ -1086,9 +1086,9 @@ func GetPoolBillingSummary(c *gin.Context) {
 	}
 	var byGroup []groupRow
 	model.LOG_DB.Model(&model.Log{}).
-		Select("`group` as `group`, COALESCE(SUM(quota),0) as quota, COUNT(*) as requests").
+		Select(model.LogGroupCol() + " as " + model.LogGroupCol() + ", COALESCE(SUM(quota),0) as quota, COUNT(*) as requests").
 		Where("created_at >= ? AND type = ?", startTs, model.LogTypeConsume).
-		Group("`group`").
+		Group(model.LogGroupCol()).
 		Order("quota DESC").
 		Limit(10).
 		Scan(&byGroup)

@@ -11,6 +11,8 @@
 package model
 
 import (
+	"fmt"
+
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
@@ -118,7 +120,10 @@ func GetPoolRecipeByID(id int) (*PoolRecipe, error) {
 
 func GetPoolRecipeByKey(key string) (*PoolRecipe, error) {
 	var r PoolRecipe
-	err := DB.Where("`key` = ?", key).First(&r).Error
+	// 不要用反引号包标识符：PostgreSQL 把 ` 当运算符字符，`key` = ? 会被解析成
+	// 「运算符 key 运算符 = ?」→ syntax error at or near "="。
+	// 用 map 条件让 GORM 按当前方言自己加引号（PG → "key"，MySQL → `key`）。
+	err := DB.Where(map[string]interface{}{"key": key}).First(&r).Error
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +239,28 @@ func upsertPoolRecipe(seed PoolRecipe) error {
 // upsert 模式：每次启动会保证元数据（doc/steps/materials）跟代码一致；
 // 用户已修改的 enabled / webhook / config / version 不被覆盖。
 func SeedDefaultPoolRecipes() error {
+	// 自愈：清掉历史遗留的重复配方（同 key 只留 id 最小的一条）。
+	//
+	// 为什么会有重复：早期 GetPoolRecipeByKey 用了反引号，PostgreSQL 下语法错误 →
+	// upsertPoolRecipe 把"查询失败"误当成"配方不存在" → 每次启动又 Insert 一条。
+	// 唯一索引 uk_pool_recipe_key_delete_at 是 (key, deleted_at) **复合**索引，
+	// 而 deleted_at 为 NULL 时 NULL 互不相等，压根拦不住。
+	// 只清理 deleted_at IS NULL 的活跃行，不动软删记录。
+	keyCol := KeyCol()
+	dedupeSQL := "DELETE FROM pool_recipes WHERE deleted_at IS NULL AND id NOT IN (" +
+		"SELECT MIN(id) FROM pool_recipes WHERE deleted_at IS NULL GROUP BY " + keyCol + ")"
+	if res := DB.Exec(dedupeSQL); res.Error != nil {
+		common.SysLog("[pool] dedupe recipes failed: " + res.Error.Error())
+	} else if res.RowsAffected > 0 {
+		common.SysLog(fmt.Sprintf("[pool] removed %d duplicated recipe rows", res.RowsAffected))
+	}
+
 	// 清理首版的两条空 stub（"claude-oauth" / "gemini-free"），它们已被新版替代
-	DB.Unscoped().Where("`key` IN (?, ?) AND (manual_steps IS NULL OR manual_steps = '')",
-		"claude-oauth", "gemini-free").Delete(&PoolRecipe{})
+	// （同样不能用反引号，理由见 GetPoolRecipeByKey）
+	DB.Unscoped().
+		Where(map[string]interface{}{"key": []string{"claude-oauth", "gemini-free"}}).
+		Where("manual_steps IS NULL OR manual_steps = ''").
+		Delete(&PoolRecipe{})
 
 	// 一次性迁移：v2.0 之后本仓库不再内置任何 chromedp Runner，
 	// 把历史上 manual_mode=false 又没配 webhook 的剧本统一刷回 manual_mode=true，
@@ -513,7 +537,7 @@ func EnsureDefaultOption(key, value string) error {
 		return nil
 	}
 	var existing Option
-	err := DB.Where("`key` = ?", key).First(&existing).Error
+	err := DB.Where(map[string]interface{}{"key": key}).First(&existing).Error
 	if err == nil {
 		return nil
 	}
