@@ -14,6 +14,11 @@ import (
 func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
+	// CORS：本 fork 支持「前端部署在 Cloudflare、后端留在自建服务器」的分域部署，
+	// 因此 /api/* 必须显式挂 CORS。注意必须在注册子路由之前 Use，gin 的中间件链
+	// 是注册时快照；SetRelayRouter 里的 router.Use(CORS()) 只覆盖它之后注册的路由，
+	// 覆盖不到这里先注册的 /api/*。（对照上游：/v1/* 和 dashboard 都有 CORS）
+	apiRouter.Use(middleware.CORS())
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())

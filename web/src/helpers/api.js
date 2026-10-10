@@ -30,6 +30,9 @@ export let API = axios.create({
   baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
     ? import.meta.env.VITE_REACT_APP_SERVER_URL
     : '',
+  // 分域部署（前端在 CDN、后端在另一台机器）时，登录态是 session cookie，
+  // 跨域请求必须显式带上凭证，否则浏览器既不会存 Set-Cookie 也不会回传。
+  withCredentials: true,
   headers: {
     'New-API-User': getUserIdFromLocalStorage(),
     'Cache-Control': 'no-store',
@@ -85,6 +88,7 @@ export function updateAPI() {
     baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
       ? import.meta.env.VITE_REACT_APP_SERVER_URL
       : '',
+    withCredentials: true,
     headers: {
       'New-API-User': getUserIdFromLocalStorage(),
       'Cache-Control': 'no-store',
