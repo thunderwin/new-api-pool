@@ -51,7 +51,7 @@
 - [ ] 2.8 Redis / PG 不暴露公网
 
 ### 应用
-- [ ] 2.9 root 密码已改（不是 123456）
+- [ ] 2.9 管理员密码足够强（初始化向导自设，系统无默认账号）
 - [ ] 2.10 删除默认令牌
 - [ ] 2.11 admin.example.com 走 Cloudflare Access SSO + 2FA
 - [ ] 2.12 admin 与 api 是不同子域名

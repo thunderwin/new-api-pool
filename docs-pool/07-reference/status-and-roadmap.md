@@ -17,7 +17,7 @@
 ### 2.1 基础设施
 - [x] fork 自 [QuantumNous/new-api](https://github.com/QuantumNous/new-api)，本地编译产物 `new-api-macos`
 - [x] 双击 `start.command` 启动，单进程 + SQLite + 嵌入前端
-- [x] 默认管理员 `root / 123456`
+- [x] 首次访问的初始化向导：管理员账号 / 密码由用户自设，**系统没有内置默认账号**
 - [x] 数据库 4 张新表：`pool_accounts` / `pool_recipes` / `pool_jobs` / `pool_alert_history`
 - [x] 一级菜单「号池管理」+ 5 子菜单（仅 admin 可见）
 

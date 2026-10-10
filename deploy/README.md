@@ -99,7 +99,7 @@ $EDITOR .env                         # 改 API_DOMAIN/ADMIN_DOMAIN/ACME_EMAIL/AD
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-容器都 `healthy` 后 → `https://admin.your-domain.com` → `root/123456` 登录 → **立刻改密码**。
+容器都 `healthy` 后 → `https://admin.your-domain.com` → 首次访问进初始化向导，自己设管理员账号和密码。
 
 后续每一步都在 [`ROADMAP.md`](./ROADMAP.md) 里。
 
@@ -123,7 +123,7 @@ docker compose -f docker-compose.prod.yml up -d
 - [ ] 源站防火墙：只允许 Cloudflare IP 段访问 80/443
 - [ ] 备份做过至少一次成功恢复演练
 - [ ] `CRYPTO_SECRET` 备份到 1Password / Vault
-- [ ] 修改 root 默认密码，开启 2FA
+- [ ] 管理员密码足够强（初始化向导自设，系统无默认账号），开启 2FA
 - [ ] 监控告警跑通（Telegram 收到测试消息）
 
 ## 故障速查（精简版）

@@ -265,6 +265,13 @@ GORM 的 `default` tag 会在字段为 zero-value（false/0/""）时填默认值
 
 - 默认 SQLite（`one-api.db`），数据全在一个文件里
 - 前端 `web/dist/` 用 `//go:embed` 编进 binary，不需要单独 nginx
+
+> 补充（2026-10-10）：`//go:embed` 仍然保留，但它不再是**唯一**的托管方式。
+> 设了 `FRONTEND_BASE_URL` 之后，后端只做 API，网页路径 301 跳到外部前端
+> （本 fork 实际部署就是把 React 放在 Cloudflare Pages、服务器只跑 API）。
+> 见 [`../03-deployment/tokwork-nbg1.md`](../03-deployment/tokwork-nbg1.md) 与
+> [`../07-reference/changelog.md`](../07-reference/changelog.md) v0.5.2。
+
 - macOS arm64 binary 70-100MB，双击 `start.command` 起动
 - 生产化时再切 Postgres + 多实例 + Caddy（蓝图都在 [`deploy/`](../../deploy/)）
 

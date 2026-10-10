@@ -72,26 +72,35 @@ xattr -d com.apple.quarantine <REPO>/new-api-macos
 
 ## B. 登录 / 后台访问
 
-### B1. 登录提示 `用户名或密码错误`，但确认是 `root` / `123456`
+### B1. 登录提示 `用户名或密码错误`
 
-**假设**：
-- 密码被改过没记下来
-- 大小写敏感
+**⚠️ 先纠正一个最常见的误判**：本项目**没有内置默认账号**。
+`model/main.go` 里那个建 `root`/`123456` 的函数 `createRootAccountIfNeed()`
+**定义了但从未被调用**（全仓库零调用点）。管理员账号是首次访问时在 `/setup`
+初始化向导里自己设的 —— 见 [`../04-usage/admin-quickstart.md`](../04-usage/admin-quickstart.md)。
 
-**修复**（直接改 SQLite）：
+**第一步：先确认账号名**（管理员是 `role = 100` 的那个）：
 ```bash
-cd <REPO>
-pkill -f new-api-macos
-sqlite3 one-api.db
-sqlite> SELECT id, username, status FROM users WHERE username='root';
--- 如果存在，重置密码：
-sqlite> UPDATE users SET password='$2a$10$1qiQF7I4y8K8fO/QF3D96e..gdLYO.efkjFmlrjjg6mt8s2x86fpa' WHERE username='root';
--- 这串 bcrypt 等于 "123456"
-sqlite> .quit
-./start.command
+# SQLite
+sqlite3 one-api.db "SELECT id, username, role FROM users WHERE role = 100;"
+
+# PostgreSQL
+docker exec -e PGPASSWORD="$PG_PASSWORD" new-api-postgres \
+  psql -U "$PG_USER" -d "$PG_DB" -c "SELECT id, username, role FROM users WHERE role = 100;"
 ```
 
-> bcrypt 加密 = 不可逆，重置只能换成已知 hash。上面那串是 `123456` 的 bcrypt cost=10。
+**第二步：忘记密码就改库**。bcrypt 不可逆，只能换成新的哈希。
+**自己现生成一个**，别用文档里写死的值：
+
+```bash
+python3 -c "import bcrypt,getpass; print(bcrypt.hashpw(getpass.getpass('新密码: ').encode(), bcrypt.gensalt(10)).decode())"
+```
+
+```sql
+UPDATE users SET password = '<上一步输出的 bcrypt 串>' WHERE username = '<账号名>';
+```
+
+> 改完刷新浏览器即可，不必重启服务（会话里存的是 id/username，不校验密码哈希）。
 
 ---
 

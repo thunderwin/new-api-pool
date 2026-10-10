@@ -49,7 +49,8 @@ go build -o new-api-macos .          # 或 GOOS=linux GOARCH=amd64 go build -o n
 
 # 3. 浏览器
 open http://localhost:3000
-# 默认账号：root / 123456  ← 登录后立刻改！
+# 首次访问会跳到初始化向导，自己设管理员账号（≤12 字符）和密码（≥8 字符）
+# 系统没有内置默认账号，别去找 root/123456
 ```
 
 更详细：[`docs-pool/02-development/setup.md`](docs-pool/02-development/setup.md) / [`docs-pool/04-usage/admin-quickstart.md`](docs-pool/04-usage/admin-quickstart.md)

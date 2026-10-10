@@ -11,7 +11,7 @@ fork 启动后会有一些**默认值**，**全部要在上线前改掉**：
 
 | 项 | 默认值 | 危害 | 怎么改 |
 |---|---|---|---|
-| 管理员 root 密码 | `123456` | 任何能访问后台的人秒进 | 后台「设置 → 个人设置 → 修改密码」（强密码 ≥ 12 位） |
+| 管理员密码 | **无默认值**（首次访问的初始化向导里自设） | 向导只要求 ≥8 位，弱密码等于把后台敞开 | 首次设置时就直接用强密码（≥ 12 位） |
 | Default Token | 安装时生成的 access_token | 拿到的人能调所有上游 | 后台「令牌」→ 删除/吊销原始 token，重建 |
 | Telegram Bot Token | 启动时空（开源版默认） | 必须填上自己的 Bot Token 才能推送告警 | 「号池管理 → 巡检告警 → ⚙️ Telegram 设置」<br>或环境变量 `POOL_TELEGRAM_BOT_TOKEN` |
 | Telegram Chat Id | 启动时空（开源版默认） | 同上 | 同上 / `POOL_TELEGRAM_CHAT_ID` |
@@ -19,7 +19,8 @@ fork 启动后会有一些**默认值**，**全部要在上线前改掉**：
 
 **自检 SQL**：
 ```sql
-SELECT username FROM users WHERE username='root';
+-- 管理员是 role=100 的那个用户（名字由初始化向导决定，不一定是 root）
+SELECT id, username, role FROM users WHERE role = 100;
 SELECT \`key\`, value FROM options WHERE \`key\` LIKE 'PoolTelegram%';
 SELECT \`key\`, value FROM options WHERE \`key\` LIKE 'Pool%ApiKey';
 ```

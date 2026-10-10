@@ -40,7 +40,7 @@ xattr -d com.apple.quarantine "$BIN" 2>/dev/null || true
 
 echo ""
 echo "[3/3] 启动 new-api，监听 http://localhost:3000"
-echo "默认管理员账号: root  密码: 123456 (首次登录后请修改)"
+echo "首次启动：浏览器会进入初始化向导，请自己设置管理员账号（≤12 字符）和密码（≥8 字符）"
 echo "号池管理入口：登录后侧边栏「号池管理」一级菜单"
 echo "数据保存在: $(pwd)/data"
 echo ""

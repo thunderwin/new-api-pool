@@ -15,6 +15,7 @@
 - [E. 编译 / embed / 二进制](#e-编译--embed--二进制)
 - [F. Telegram / 第三方 API](#f-telegram--第三方-api)
 - [G. 流程 / 协作 / 文档](#g-流程--协作--文档)
+- [H. 部署 / 分域 / CORS](#h-部署--分域--cors)
 
 ---
 
@@ -195,6 +196,32 @@ GORM ORM 写法没事（自动加引号），手写 SQL / `model.DB.Raw(...)` �
 
 #### 预防
 排查脚本里的 SQL 第一时间检查关键字。
+
+#### ⚠️ 但反引号只在 SQLite / MySQL 成立，PostgreSQL 会直接炸
+
+**2026-10-10 补记，伤害指数 ⭐⭐⭐⭐**。PG 把 `` ` `` 当**运算符字符**（不是标识符引号），
+所以 `` WHERE `key` = ? `` 被解析成「运算符 ` key 运算符 ` = ?」：
+
+```
+syntax error at or near "="        ← 来自 `key` = ?
+syntax error at or near "IN"       ← 来自 `key` IN (...)
+```
+
+报错位置落在 `=` / `IN` 上，**完全看不出根因是反引号**，极易查错方向。
+
+**正确写法**：别手写标识符引号，交给 GORM 按方言自己加
+（PG → `"key"`，MySQL → `` `key` ``）：
+
+```go
+DB.Where(map[string]interface{}{"key": key}).First(&r)          // 单值
+DB.Where(map[string]interface{}{"key": []string{"a", "b"}})     // IN
+DB.Model(&M{}).Where(map[string]interface{}{"key": k}).
+    UpdateColumn(col, gorm.Expr(col+" + 1"))                    // 自增
+```
+
+**连带伤**：查询报错 → 代码以为记录不存在 → 去 `Create` → 撞唯一键冲突。
+线上当时同时出现 `options_pkey` 重复，修好引号后自动消失。
+**看到"主键冲突"先怀疑它前面那条查询是不是静默失败了。**
 
 ---
 
@@ -754,6 +781,91 @@ curl -X POST $BASE/api/pool/jobs/$JOB_ID/manual-result ...
 - 一个改动 = 一个 commit
 - 改前先 `git status` 看清当前 dirty
 - 改完 `git add -p` 分块加（不是一锅 `git add .`）
+
+---
+
+## H. 部署 / 分域 / CORS
+
+> 场景：前端 React 部署在 Cloudflare Pages（`admin.xxx.com`），
+> 后端只做 API 跑在自建服务器（`api.xxx.com`）。
+
+### H1. 用 curl 验证 CORS = 自欺欺人
+
+**伤害指数**：⭐⭐⭐⭐⭐（2026-10-09 / 10-10 连续踩了三个来回）
+
+`curl` **不执行浏览器的 CORS 规则**。下面这些它一概不报错：
+预检不通过、`Allow-Headers` 少了某个自定义头、`*` 与凭证互斥……
+全都返回 200/204。于是"我测过了，是通的"——用户一开浏览器就报错。
+
+**唯一可信的验证方式**是按规范逐条断言（见本节末尾脚本），
+或者直接在浏览器 Network 面板里看。
+
+### H2. 登录态是 session cookie，不是 token
+
+**伤害指数**：⭐⭐⭐⭐
+
+`controller/user.go` 的 `setupLogin` **只写 session**，响应体里没有 token；
+`middleware/auth.go` 的 `authHelper` 优先读 `session.Get("username")`，
+只有 session 为空时才回退去查 `Authorization` 里的 access token。
+
+跨域 XHR 默认 `credentials: 'same-origin'` —— **既不保存响应里的 `Set-Cookie`，也不回传**。
+表现极具迷惑性：
+
+- 登录接口 200，UI 也跳进去了（用户信息来自响应体）
+- **一刷新就掉登录**，`/api/user/self` 401，提示"未登录或登录已过期"
+
+**修**：前端 axios 加 `withCredentials: true` + 后端 CORS 放行对应 Origin。
+
+### H3. 凭证模式下两个通配符都会失效
+
+**伤害指数**：⭐⭐⭐⭐
+
+浏览器规则（当 `Access-Control-Allow-Credentials: true` 时）：
+
+| 头 | 非凭证 | 凭证模式 |
+|---|---|---|
+| `Access-Control-Allow-Origin: *` | ✅ 通配 | ❌ **无效**，必须回显具体 Origin |
+| `Access-Control-Allow-Headers: *` | ✅ 通配 | ❌ **被当成字面量头名**，自定义头全被拒 |
+
+`Allow-Headers` 这条尤其阴——报错是
+`Request header field new-api-user is not allowed by Access-Control-Allow-Headers`，
+看着像"少配了一个头"，其实是 `*` 在凭证模式下不作数。
+
+**修**：凭证模式下回显浏览器实际请求的头（`Access-Control-Request-Headers`）。
+
+### H4. 为什么不能对所有 Origin 都回显
+
+回显任意 Origin + `Allow-Credentials: true` = **任意网站都能拿受害者的登录 Cookie
+读接口响应**——攻击者开个页面就能把 `/api/token/` 里的密钥读走。
+
+但全收紧又会挡住第三方网页客户端调 `/v1/*`（它们自带 API Key、不带 Cookie）。
+
+**所以策略要分流**：
+
+| Origin | Allow-Origin | Allow-Credentials |
+|---|---|---|
+| 命中 `FRONTEND_BASE_URL` / `TRUSTED_ORIGINS` | 回显该 Origin | `true` |
+| 其它 | `*` | 不带 |
+
+### H5. `api` 域名必须是灰云（仅 DNS）
+
+橙云会被 Cloudflare 的 **100 秒 HTTP 超时**掐断 LLM 长流式响应（524）。
+界面域名（静态站）反而适合橙云。
+
+### 验收脚本（改完 CORS 必须跑）
+
+```bash
+ORIGIN="https://admin.tokwork.com"
+BASE="https://api.tokwork.com"
+curl -s -D - -o /dev/null -X OPTIONS -H "Origin: $ORIGIN" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: new-api-user" \
+  "$BASE/api/status" | grep -i "^access-control"
+# 必须看到：
+#   access-control-allow-origin: https://admin.tokwork.com   ← 不是 *
+#   access-control-allow-credentials: true
+#   access-control-allow-headers: new-api-user                ← 不是 *
+```
 
 ---
 

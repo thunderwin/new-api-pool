@@ -2,6 +2,17 @@
 
 > 本文是**索引页**——具体的生产蓝图、Docker Compose、监控告警、合规文档全部都已经写在 [`<REPO>/deploy/`](../../deploy/) 里。这里只补充与本 fork 强相关的细节。
 
+---
+
+## 0. 先看这个：真实上线的那一套
+
+[`tokwork-nbg1.md`](./tokwork-nbg1.md) —— **2026-10-09 实际上线的部署记录**：
+Hetzner 纽伦堡 CPX12 + Docker Compose 四容器 + Cloudflare Pages 前端，
+含域名规划、构建链路、资源预算、备份现状与排错速查。
+
+本文余下部分和 [`deploy/`](../../deploy/) 是**通用蓝图**（怎么搭都行的那套），
+和上面的实际部署不是同一件事。别把蓝图的资源规划当成线上现状。
+
 ## 1. 推到生产前的准备
 
 按 [deploy/ROADMAP.md](../../deploy/ROADMAP.md) Week 0 完成清单：
