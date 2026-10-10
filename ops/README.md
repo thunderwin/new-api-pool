@@ -1,0 +1,53 @@
+# `ops/` — 这台生产环境**实际在跑**的部署脚本
+
+> ⚠️ 别和 [`../deploy/`](../deploy/) 搞混：
+>
+> | | 是什么 |
+> |---|---|
+> | [`deploy/`](../deploy/) | **通用蓝图**——"可以怎么搭"。12 周上线路线图 + 各种模板，里面的 IP / 域名 / 密钥全是占位符 |
+> | `ops/`（本目录） | **实际部署**——tokwork 生产环境真正在用的那一套脚本 |
+>
+> 当前生产环境的完整记录（拓扑、规格、域名、踩坑）见
+> [`../docs-pool/03-deployment/tokwork-nbg1.md`](../docs-pool/03-deployment/tokwork-nbg1.md)。
+
+## 文件
+
+| 文件 | 作用 |
+|---|---|
+| `hetzner-prep.sh` | 服务器初始化：2G swap、基础包、Docker、ufw 只放 22/80/443、建 `/opt/new-api-pool/` |
+| `deploy/Dockerfile` | 极简运行时镜像（`debian:bookworm-slim` + 预编译二进制）。**服务器不做编译** |
+| `deploy/docker-compose.yml` | 四容器编排（app / postgres / redis / caddy）+ 健康检查 + 针对 2 GB 内存的资源限制 |
+| `deploy/Caddyfile` | 只服务 API 域名；SSE 不缓冲、超时 600s（否则长流式回答会被掐断） |
+| `deploy/gen-env.sh` | **在服务器本地**生成 `.env`（PG/Redis 密码、`SESSION_SECRET`、`CRYPTO_SECRET`），密钥不出机器 |
+| `deploy/backup.sh` | 每日 `pg_dump` → gzip → 完整性自检 → 清理过期 → 可选 rclone 上传 R2 |
+| `deploy/setup-rclone.sh` | 交互式配置 rclone → Cloudflare R2（`read -s` 读密钥，不落 shell history），写完当场连通自检 |
+
+## 完整流程
+
+```bash
+# 1. 新机器初始化（在服务器上，用 root 跑）
+ssh root@<ip> 'bash -s' < ops/hetzner-prep.sh
+
+# 2. 本地构建（服务器只有 1 核，故意不在上面编译）
+cd web && bun install
+VITE_REACT_APP_SERVER_URL="https://api.<domain>" DISABLE_ESLINT_PLUGIN='true' bun run build
+cd .. && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w" -o new-api-linux-amd64 .
+
+# 3. 传到服务器
+scp new-api-linux-amd64 ops/deploy/{Dockerfile,docker-compose.yml,Caddyfile,gen-env.sh,backup.sh,setup-rclone.sh} \
+    root@<ip>:/opt/new-api-pool/
+
+# 4. 生成密钥 + 起服务
+ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker compose build && docker compose up -d'
+```
+
+## 两个必须知道的约束
+
+1. **`main.go` 里有 `//go:embed web/dist`** —— 编后端之前**必须先构建前端**，否则 `go build` 直接失败。
+2. **前端构建要注入 `VITE_REACT_APP_SERVER_URL`** —— 否则 `web/src/helpers/api.js` 的 axios baseURL
+   会退化成相对路径，而前端托管在 Cloudflare、后端在服务器上，两边不同域。
+
+## 改动本目录时
+
+按 GEB 规矩，改脚本要**顺手改脚本内的注释**，并同步
+[`../docs-pool/03-deployment/tokwork-nbg1.md`](../docs-pool/03-deployment/tokwork-nbg1.md) 里对应的说明。

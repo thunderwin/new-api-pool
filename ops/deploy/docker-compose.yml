@@ -1,0 +1,163 @@
+# tokwork 中转站 — Hetzner NBG1 生产编排
+# 目标机：CPX12（1 vCPU / 1.9 GB RAM / 40 GB NVMe）
+# 内存预算：postgres 512M + new-api 576M + redis 160M + caddy 96M ≈ 1.31 GB
+#           剩 ~0.6 GB 给系统 + page cache，另配 2 GB swap 兜底
+
+name: new-api-tokwork
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+services:
+  # ───────── 数据库 ─────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: new-api-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+      TZ: Asia/Shanghai
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [internal]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command:
+      - postgres
+      - -c
+      - max_connections=80
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - log_min_duration_statement=1000
+    mem_limit: 512m
+    cpus: 0.8
+
+  # ───────── 缓存 ─────────
+  redis:
+    image: redis:7-alpine
+    container_name: new-api-redis
+    restart: always
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --maxmemory
+      - 96mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - redis_data:/data
+    networks: [internal]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 160m
+    cpus: 0.3
+
+  # ───────── 网关主进程 ─────────
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tokwork/new-api:local
+    container_name: new-api-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SQL_DSN: postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}
+      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379
+      SESSION_SECRET: ${SESSION_SECRET}
+      CRYPTO_SECRET: ${CRYPTO_SECRET}
+      TZ: Asia/Shanghai
+      BATCH_UPDATE_ENABLED: "true"
+      BATCH_UPDATE_INTERVAL: "5"
+      MEMORY_CACHE_ENABLED: "true"
+      ERROR_LOG_ENABLED: "true"
+      STREAMING_TIMEOUT: "300"
+      RELAY_TIMEOUT: "600"
+      NODE_TYPE: master
+      NODE_NAME: tokwork-nbg1
+      # 前端（React SPA）由 Cloudflare Pages 托管，本服务只做 API：
+      # 设了这个变量后，未注册的网页路径会 301 跳到前端，/api/* 和 /v1/* 不受影响。
+      FRONTEND_BASE_URL: https://${ADMIN_DOMAIN}
+      # 让 Go 的 GC 在 576M cgroup 限制内更积极回收
+      GOMEMLIMIT: 460MiB
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [internal]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -q '\"success\":true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 576m
+    cpus: 0.9
+
+  # ───────── TLS + 反代（只服务 API 域名）─────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: new-api-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    networks: [internal, public]
+    depends_on:
+      new-api:
+        condition: service_healthy
+    logging: *default-logging
+    mem_limit: 96m
+    cpus: 0.3
+
+volumes:
+  pg_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge

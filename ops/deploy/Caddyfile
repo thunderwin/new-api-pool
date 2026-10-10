@@ -1,0 +1,48 @@
+# 只服务 API 域名。前端 SPA 由 Cloudflare 托管，不经过这台机器。
+# 注意：api 域名的 DNS 必须设为「仅 DNS」（灰云），否则 Cloudflare
+# 100 秒超时会掐断 LLM 的长流式响应（524）。
+
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+	log {
+		output stdout
+		format json
+		level INFO
+	}
+}
+
+{$API_DOMAIN} {
+	encode gzip zstd
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy new-api:3000 {
+		# SSE 流式响应绝不能缓冲
+		flush_interval -1
+
+		transport http {
+			read_timeout 600s
+			write_timeout 600s
+			dial_timeout 10s
+		}
+
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+	}
+
+	log {
+		output file /var/log/caddy/api.log {
+			roll_size 50mb
+			roll_keep 7
+		}
+		format json
+	}
+}

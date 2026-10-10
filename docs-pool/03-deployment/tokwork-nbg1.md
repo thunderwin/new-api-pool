@@ -272,7 +272,11 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | `ops/deploy/gen-env.sh` | 在服务器本地生成 `.env`（PG/Redis 密码、SESSION_SECRET、CRYPTO_SECRET） |
 | `ops/deploy/backup.sh` | 每日 pg_dump + 自检 + 清理 + 可选 rclone |
 | `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
-| `ops/tokwork-bootstrap-test.yaml` | 早期 DigitalOcean 试机的 cloud-init，**已不用**（DO 那台已删） |
+
+> `ops/` 在**仓库里**（`<REPO>/ops/`）。早前它在仓库外层，
+> 导致别人克隆公开仓库后照着本文找不到脚本 —— 2026-10-10 已移入仓库，
+> 并加了 [`ops/README.md`](../../ops/README.md) 说明它与 `deploy/` 蓝图的分工。
+> 早期 DigitalOcean 试机的 cloud-init 已删除（那台机器早已销毁，留着只会误导）。
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 

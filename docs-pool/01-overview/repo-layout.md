@@ -75,6 +75,11 @@
 │   ├── billing/  bi/  risk-control/  customer-ops/  ...
 │   └── docs/                      ← 面向调用方的 API 用户文档
 │
+├── ops/                           ← ★ 生产环境**实际在跑**的部署脚本（区别于上面的蓝图）
+│   ├── README.md                  ← 使用顺序 + 和 deploy/ 的区别
+│   ├── hetzner-prep.sh            ← 服务器初始化（swap / Docker / ufw）
+│   └── deploy/                    ← Dockerfile / compose / Caddyfile / 密钥生成 / 备份 / rclone
+│
 ├── README.md                      ← 仓库门面（fork 自我介绍）
 ├── README.zh_CN.md  README.fr.md  README.ja.md  README.zh_TW.md  ← 上游多语言 README
 ├── LICENSE                        ← AGPL-3.0（继承自上游 new-api）
