@@ -43,6 +43,7 @@ apimaster 有 79 个模型，其中 57 个存在多渠道价差（例如 gpt-ima
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -52,6 +53,22 @@ from concurrent.futures import ThreadPoolExecutor
 UPSTREAM = "https://apimaster.ai"
 TOKEN_FILE = "/root/upstream-apimaster-admin-token.txt"
 ADMIN_TOKEN_FILE = "/root/newapi-admin-token.txt"
+
+# 表达式里**只有「变量系数」是价格**，要按倍率放大；
+# 像 `len <= 272000` 这种阈值、以及 tier 名字里的数字，绝对不能动。
+# 匹配 `p * 5` / `(p)*2` / `cc1h * 3.0` 这类形式（变量在前、系数在后）。
+COEF_RE = re.compile(r"\(?\b(cc1h|cr|cc|p|c)\)?\s*\*\s*(\d+(?:\.\d+)?)")
+
+
+def scale_expr(expr: str, factor: float) -> str:
+    """把表达式里的价格系数乘以 factor，阈值保持不变。"""
+    if factor == 1.0:
+        return expr
+
+    def rep(m):
+        return f"{m.group(1)} * {round(float(m.group(2)) * factor, 10):g}"
+
+    return COEF_RE.sub(rep, expr)
 
 
 def find_repo():
@@ -86,6 +103,22 @@ def psql_json(sql, env):
     return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
 
 
+def read_current_options(env):
+    """读回本系统当前的 ModelPrice / ModelRatio，用于生成变更报告。"""
+    out = psql_json(
+        "SELECT key || E'\\t' || value FROM options "
+        "WHERE key IN ('ModelPrice','ModelRatio')", env)
+    cur = {}
+    for line in out.splitlines():
+        if "\t" in line:
+            k, v = line.split("\t", 1)
+            try:
+                cur[k] = json.loads(v)
+            except Exception:
+                cur[k] = {}
+    return cur
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--markup", type=float, default=1.25,
@@ -99,6 +132,7 @@ def main():
 
     env = load_env()
     pricing = get_json(f"{UPSTREAM}/api/pricing")["data"]
+    pricing_by_name = {x["model_name"]: x for x in pricing}
     names = [x["model_name"] for x in pricing]
 
     def market(m):
@@ -142,7 +176,8 @@ def main():
     variants_of = {k: v[2] for k, v in mk.items()}
 
     model_price, model_ratio, rel_ratio = {}, {}, {}
-    missing, skipped, multi_variant = [], [], []
+    billing_mode, billing_expr = {}, {}
+    missing, skipped, multi_variant, expr_models = [], [], [], []
     for item in pricing:
         m = item["model_name"]
         p = base_price.get(m)
@@ -151,9 +186,16 @@ def main():
             continue
         price = round(p * args.markup, 8)
         if item.get("billing_mode"):
-            # 分段/表达式计费（如 gpt-5.6-sol 的长上下文阶梯价），无法用单一
-            # ratio/price 表达，跳过交人工处理，避免把价格写错
-            skipped.append(m)
+            # 分段/表达式计费（如 gpt-5.6-sol 的"长上下文阶梯价"）。
+            # 本系统有同款表达式引擎（pkg/billingexpr，变量 p/c/len/cr/cc/cc1h），
+            # 所以直接照搬表达式，并把系数按倍率放大（阈值不动）。
+            expr = item.get("billing_expr") or ""
+            if not expr:
+                skipped.append(m)
+                continue
+            billing_mode[m] = item["billing_mode"]
+            billing_expr[m] = scale_expr(expr, args.markup)
+            expr_models.append(m)
             continue
         if unit_of.get(m) == "image" or item.get("quota_type") == 1:
             # 按张计费 → 用本系统的固定价 ModelPrice（每次调用收这么多）
@@ -180,7 +222,15 @@ def main():
         print(f"{m:34s} {kind:6s} {p:>12.6f} {ours:>12.6f}")
     print(f"  …（共 {len(model_price)+len(model_ratio)} 个模型，未全部展示）\n")
     print(f"按次计费 {len(model_price)} 个 / 按 token 计费 {len(model_ratio)} 个"
-          f" / 跳过（分段表达式）{len(skipped)} 个 / 无定价 {len(missing)} 个")
+          f" / 分段表达式 {len(billing_expr)} 个 / 跳过 {len(skipped)} 个"
+          f" / 无定价 {len(missing)} 个")
+    if expr_models:
+        print(f"  分段表达式（已按 ×{args.markup} 放大系数、阈值不变）: "
+              f"{', '.join(expr_models[:5])}{' …' if len(expr_models) > 5 else ''}")
+        for m in expr_models[:1]:
+            print(f"    例 {m}:")
+            print(f"      原: {pricing_by_name[m].get('billing_expr')}")
+            print(f"      新: {billing_expr[m]}")
     if skipped:
         print(f"  跳过: {', '.join(skipped[:8])}{' …' if len(skipped) > 8 else ''}")
     if missing:
@@ -192,10 +242,50 @@ def main():
               "按 1K 定价会在大尺寸上亏。要保守就用 --variant max。")
 
     payload = {"ModelPrice": model_price, "ModelRatio": model_ratio}
+    if billing_mode:
+        payload["billing_setting.billing_mode"] = billing_mode
+        payload["billing_setting.billing_expr"] = billing_expr
     out = "/tmp/upstream-pricing.json"
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     print(f"\n定价 JSON 已写到 {out}")
+
+    # ── 变更报告（对比本系统当前定价；cron 日志靠它看上游涨没涨）──
+    try:
+        cur = read_current_options(env)
+    except Exception as e:
+        cur = {}
+        print(f"（读当前定价失败，跳过变更报告：{e}）")
+    if cur:
+        def diff(key, new):
+            old = cur.get(key) or {}
+            up, down, added = [], [], []
+            for m, v in new.items():
+                o = old.get(m)
+                if o is None:
+                    added.append(m)
+                elif abs(v - o) > 1e-9:
+                    (up if v > o else down).append((m, o, v))
+            return up, down, added
+
+        pu, pd, pa = diff("ModelPrice", model_price)
+        ru, rd, ra = diff("ModelRatio", model_ratio)
+        total_up = len(pu) + len(ru)
+        total_down = len(pd) + len(rd)
+        total_new = len(pa) + len(ra)
+        print(f"\n=== 对比本系统当前定价 ===")
+        print(f"  涨价 {total_up} 个 / 降价 {total_down} 个 / 新增 {total_new} 个 / "
+              f"未变 {len(model_price)+len(model_ratio)-total_up-total_down-total_new} 个")
+        if total_up:
+            print("  ⬆️ 上游变贵了（取变化最大的几个，已自动跟随调价）：")
+            for m, o, v in sorted(pu + ru, key=lambda x: -(x[2] / x[1] - 1))[:5]:
+                print(f"     {m:32s} {o:.6f} → {v:.6f}  (+{(v/o-1)*100:.1f}%)")
+        if total_down:
+            print("  ⬇️ 上游降价：")
+            for m, o, v in sorted(pd + rd, key=lambda x: (x[2] / x[1] - 1))[:5]:
+                print(f"     {m:32s} {o:.6f} → {v:.6f}  ({(v/o-1)*100:.1f}%)")
+        if total_up == 0 and total_down == 0:
+            print("  ✅ 上游价格无变化")
 
     if not args.apply:
         print("（dry-run，未写入。加 --apply 才会写进本系统）")
@@ -220,6 +310,13 @@ def main():
         print(f"写入 {key}: {len(mapping)} 项")
         put_option(key, mapping)
     for key, mapping in (("ModelPrice", model_price), ("ModelRatio", model_ratio)):
+        print(f"写入 {key}: {len(mapping)} 项")
+        res = put_option(key, mapping)
+        print("  →", res.get("success"), res.get("message", ""))
+    for key, mapping in (("billing_setting.billing_mode", billing_mode),
+                         ("billing_setting.billing_expr", billing_expr)):
+        if not mapping:
+            continue
         print(f"写入 {key}: {len(mapping)} 项")
         res = put_option(key, mapping)
         print("  →", res.get("success"), res.get("message", ""))
