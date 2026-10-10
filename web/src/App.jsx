@@ -229,7 +229,7 @@ function App() {
         />
         <Route
           path='/login'
-          element={<AuthSiteRedirect path='/login' />}
+          element={<AuthSiteRedirect path='/login' withNext />}
         />
         <Route
           path='/register'

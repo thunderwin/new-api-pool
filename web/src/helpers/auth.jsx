@@ -38,10 +38,21 @@ export const AUTH_SITE_URL = (
  * `/login?expired=true` 要能让营销站显示"登录已过期"，
  * `/user/reset?email=…&token=…` 更是离开查询串就废了。
  */
-export function AuthSiteRedirect({ path }) {
+export function AuthSiteRedirect({ path, withNext = false }) {
   React.useEffect(() => {
-    window.location.replace(`${AUTH_SITE_URL}${path}${window.location.search}`);
-  }, [path]);
+    /*
+     * withNext：把"登录后回到这个后台"一起告诉营销站。
+     * 这个 SPA 现在只给管理员用（客户门户是营销站自己的 /console），
+     * 而它的 /login 被上一条规则转去营销站了 —— 不带 next 的话，
+     * 管理员登完会落到客户门户，还得自己再点回 admin。
+     * 营销站侧对 next 做了白名单（只认本站 /console 和 admin.tokwork.com）。
+     */
+    const search = window.location.search;
+    const next = withNext
+      ? `${search ? '&' : '?'}next=${encodeURIComponent(`${window.location.origin}/console`)}`
+      : '';
+    window.location.replace(`${AUTH_SITE_URL}${path}${search}${next}`);
+  }, [path, withNext]);
   return null;
 }
 
