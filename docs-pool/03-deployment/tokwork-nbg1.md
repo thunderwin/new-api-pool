@@ -274,6 +274,79 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
 | `ops/tokwork-bootstrap-test.yaml` | 早期 DigitalOcean 试机的 cloud-init，**已不用**（DO 那台已删） |
 
+## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
+
+> 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
+
+### 上游
+
+| 项 | 值 |
+|---|---|
+| Base URL | `https://apimaster.ai` |
+| 文生图接口 | `POST /v1/images/generations` |
+| 可用 image 模型（10 个） | `gpt-image-2` `gpt-image-2-fd` `gpt-image-2.5-sunburst` `gpt-image-2.5-sunburst-fd` `gpt-image-2.5-flare` `gpt-image-2.5-flare-fd` `gemini-2.5-flash-image` `gemini-3-pro-image` `gemini-3.1-flash-image` `grok-imagine-image-2.0` |
+| 上游 key | 存服务器 `/root/upstream-apimaster.key`（600） |
+
+直连实测：`/v1/models` 200（78 个模型）；`gpt-image-2` 生成一张 1024×1024 约 38s，返回 `b64_json` + `url`。
+
+### 本系统里的渠道
+
+| 项 | 值 |
+|---|---|
+| 渠道 id | 1 |
+| 名称 | `apimaster 文生图` |
+| 类型 | OpenAI（`ChannelTypeOpenAI = 1`） |
+| Base URL | `https://apimaster.ai` |
+| 分组 | `default` |
+
+**中继实测**：用系统令牌调 `https://api.tokwork.com/v1/images/generations`（model `gpt-image-2`）→
+`200`，27s，3.89MB，`logs` 表里记了 `quota=79463`。
+
+### 两个必踩的坑（都已解决，照做即可）
+
+**1. 渠道的 Base URL 不要带 `/v1`。**
+`relay/common/relay_utils.go` 的 `GetFullRequestURL(baseURL, requestURL, ...)` 是
+`baseURL + requestURL` 直接拼接，而 requestURL 已经带 `/v1` 前缀。
+写 `https://apimaster.ai/v1` 会拼成 `/v1/v1/images/generations`。
+
+**2. 用户设置里的 `accept_unset_model_ratio_model` 必须为 `true`。**
+否则调一个没配价格的模型会直接被拒：
+
+```
+模型 gpt-image-2 的价格未配置。请前往「系统设置 → 运营设置」开启自用模式，
+或在「系统设置 → 分组与模型定价设置」中为该模型配置价格
+```
+
+检查的是 `relay/helper/price.go` 里的 `info.UserSetting.AcceptUnsetRatioModel`（**用户级**，
+不是全局自用模式）。存 `users.setting` 这个 JSON 列：
+
+```sql
+UPDATE users SET setting='{"accept_unset_model_ratio_model": true}' WHERE role=100;
+```
+
+> ⚠️ 这只解决了"能不能调通"。**未配价格 = 计费按兜底 ratio 37.5 估算，对图像模型没有意义**。
+> 要正式对外收费，得去「分组与模型定价设置」给这些 image 模型配真实价格
+> （按次计费的图像模型走 `GetModelPrice`，见 `relay/helper/price.go` 的 `ModelPriceHelperPerCall`）。
+
+### 运维用的管理员 API 令牌
+
+管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
+已生成一个 32 位令牌存 `/root/newapi-admin-token.txt`（600），等价于面板「个人设置 → 生成访问令牌」。
+
+调管理接口必须同时带两个头，缺 `New-API-User` 会报 `Unauthorized, New-API-User header not provided`：
+
+```bash
+TOKEN=$(cat /root/newapi-admin-token.txt)
+curl -X POST http://127.0.0.1:3000/api/channel/ \
+  -H "Authorization: Bearer $TOKEN" -H "New-API-User: 1" \
+  -H "Content-Type: application/json" -d @payload.json
+```
+
+**要吊销**：把 `users.access_token` 置空（`UPDATE users SET access_token=NULL WHERE role=100;`），
+或在面板里重新生成一次覆盖。
+
+---
+
 ## 9. 还没做（计划，不是现状）
 
 - [ ] 确认管理员密码足够强（初始化时自设，系统无默认账号）；删除默认令牌
