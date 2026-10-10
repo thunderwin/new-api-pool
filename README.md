@@ -49,11 +49,26 @@
 
 ### 当前在售（2026-10-10 核实）
 
-- **1 个渠道**：apimaster 文生图；**在售 10 个图片模型**，`GET /v1/models` 是唯一权威列表。
-- **文本/对话模型还没接**：`POST /v1/chat/completions` 现在返回 `503 model_not_found`（实测）。
-- 定价由 `sync-upstream-pricing.py` 每日 04:00 按上游**最低价 ×1.25** 自动同步；
-  图片模型另有按输出规格的价表（`ImageSizePrice`）。
+- **1 个渠道**：apimaster（`base_url=https://apimaster.ai`，type=1）。
+- **在售 77 个模型**，`GET /v1/models` 是唯一权威列表：
+  | 计费方式 | 数量 | 例子 |
+  |---|---|---|
+  | 按 token（对话 / embedding / 音频转写） | 46 | `deepseek-flash`、`claude-sonnet-5`、`text-embedding-3-small`、`bge-m3`、`gpt-transcribe` |
+  | 分段表达式（长上下文阶梯价） | 9 | `gpt-5.6-sol`、`gpt-6-*`、`MiniMax-M3` |
+  | 按次（图片 / 视频） | 22 | `gpt-image-2-fd`（按规格）、`seedance-2.0`、`kling-v3-*`、`midjourney-*` |
+- **上游有 79 个，我们去掉 2 个**（都不适合卖）：
+  - `apimaster-freemodel`：上游 marketplace 里没有它的售价（只有官方 ratio=0），
+    卖它会被本系统的兜底 ratio（37.5 → $75/M）定成天价。要卖的话得先给一个明确价（比如 0 = 免费）。
+  - `jev-latest`：上游只支持 `typesafe` 端点（`POST /v1/systemone`），**不是 OpenAI 兼容**，
+    走 `/v1/chat/completions` 会 400。
+- 定价：`sync-upstream-pricing.py` 每日 04:00 按上游**最低价 ×1.25** 自动同步
+  （图片模型另有按输出规格的价表 `ImageSizePrice`）。
 - 控制台报价页与后台 admin 页是**同一份 SPA**，差别只在登录账号的角色。
+
+> ⚠️ **已知缺口：视频模型的按次计费只能按最低档收。**
+> 视频的价表档位是 `480P/720P/1080P`（图片是 1K/2K/4K），而计费时的
+> `MatchImageSizeVariant` 是按"图片长边像素"归档的，对不上 → 一律落到该模型的最低价。
+> 接视频正式售卖前要再改一轮（读视频请求里的分辨率/时长参数）。
 
 ### Cloudflare 账号（**别搞错**）
 

@@ -830,9 +830,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$JAR" \
 - [ ] 配 Cloudflare Access 保护 `admin.tokwork.com`
 - [ ] 决定是否把 `/api/*` 从 `api.tokwork.com` 上摘掉（Caddy 加路径规则）
 - [ ] `CRYPTO_SECRET` 另存到密码管理器（**丢了所有上游 Key 解码失败**）
-- [ ] 接文本模型渠道。**当前只接了 1 个渠道（apimaster 文生图），在售 10 个图片模型**；
-      `GET /v1/chat/completions` 用任何文本模型都会返回 `503 model_not_found`
-      （2026-10-10 实测，见 README 的「当前在售」一节）
+- [x] 接文本模型（2026-10-10 完成）：把 apimaster 的 79 个模型全量并入渠道，
+      去掉 2 个不能卖的（`apimaster-freemodel` 上游无售价 / `jev-latest` 非 OpenAI 兼容），
+      **在售 77 个** —— 46 按 token、9 分段表达式、22 按次。实测
+      `deepseek-flash`、`claude-sonnet-5`、`text-embedding-3-small`（1536 维）全部 200
+- [ ] 视频模型按次计费要精确化：档位名是 `480P/720P/1080P`，和图片的 1K/2K/4K 归档逻辑对不上，
+      现在一律按最低档收（详见 README 的「当前在售」）
 
 > 已完成（2026-10-10）：Hetzner 付费磁盘备份已开；rclone → R2 异地备份已配并实测通过。
 > 已完成（2026-10-10）：宣传站 apex 已从死掉的 `47.245.87.159` 切到 Worker
