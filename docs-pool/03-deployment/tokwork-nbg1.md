@@ -365,6 +365,21 @@ apimaster 本身也是 new-api/one-api 类网关，所以带**标准计费接口
 `PoolUpstreamCostRatio`（默认 0.6），**那是拍脑袋的值，不是真实上游账单**。
 要真实毛利，得改成按上面的接口拉日累计再对账。
 
+#### 补充（同日实测）：逐笔成本其实拿得到 —— 但要用账号 access token
+
+apimaster **本身也是 new-api**（`GET /api/status` 返回的结构与本项目一致）。
+它有一整套管理接口，但用的是**账号 access token**，不是 `sk-` 中转 key：
+
+| 接口 | 用 `sk-` key | 说明 |
+|---|---|---|
+| `/v1/dashboard/billing/usage?start_date=&end_date=` | ✅ 200 | 按日累计 |
+| `/api/log/?p=0&page_size=N` | ❌ `invalid access token` | **逐笔日志**（含每笔 quota） |
+| `/api/user/self` | ❌ 同上 | 账户已用额度 |
+
+**做法**：去 apimaster 后台「个人设置 → 生成访问令牌」拿一个 access token，
+之后 `/api/log/` 就能**逐笔**拉上游消耗，和本项目 `logs` 表的用户侧 `quota`
+按时间+模型配对，即可算出**真实毛利**（两边没有共同的 request id，只能按时间窗配对，有噪声）。
+
 ### 运维用的管理员 API 令牌
 
 管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
