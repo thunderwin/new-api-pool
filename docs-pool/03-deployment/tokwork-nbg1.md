@@ -134,6 +134,17 @@ HTTP 超时掐断 LLM 长流式响应（524）。
 `tokwork.com` 这个 zone 在**另一个 Cloudflare 账号**里，与本项目使用的
 `Info@yijianspace.com's Account`（Pages 项目所在账号）不同。
 
+> ⚠️ **2026-10-10 更正**：项目的 Cloudflare 资源应该都在
+> **`28fa4860b37a3bb670d098eb493b781e`** 这个账号（tokwork.com 的 zone、
+> `tokwork*` 系列的 R2 桶都在这里）。
+> 但 **`tokwork-admin` 这个 Pages 项目当初被部署到了 `372be715…`
+> （`Info@yijianspace.com's Account`）——放错了账号**，
+> 这也是 `admin.tokwork.com` 那条跨账号 CNAME 出现 308 死循环的根源。
+> **待办**：把 Pages 项目迁到 `28fa4860…`，让 Pages、DNS、R2 同账号。
+>
+> **待验证**：`372be715…` 与 `28fa4860…` 分属不同的 Cloudflare 登录身份
+> （CLI 认证的是前者，浏览器登录的 `free.lei.sheng@gmail.com` 能访问后者）。
+
 > 已核实 2026-10-10：`admin` 这条是**灰云**（解析结果是 CNAME 链直接到
 > `172.66.44.81 / 172.66.47.175`，不是 Cloudflare 代理 IP `104.21.x`）。
 > 代价是用不了 Cloudflare Access（Access 需要橙云）。**待定**：要不要为 Access
@@ -197,16 +208,53 @@ Postgres 关键参数：`shared_buffers=128MB`、`max_connections=80`、`work_me
 
 ## 7. 备份
 
-> 已核实 2026-10-09。
+> 已核实 2026-10-10：三层全部到位，异地同步实测通过。
 
 | 层 | 内容 | 状态 |
 |---|---|---|
 | `pg_dump` 每日全量 | `/opt/new-api-pool/backups/newapi-<时间戳>.sql.gz` | ✅ cron `30 3 * * *`，保留 14 天，落地即做 `gzip -t` 自检 |
-| rclone 异地同步 | 支持，`RCLONE_REMOTE`/`RCLONE_PATH` 填了即生效 | ⚠️ **还没配**（没有目标对象存储） |
-| Hetzner 付费磁盘备份（+20%） | 整机快照 | ⚠️ **还没开** |
+| rclone → Cloudflare R2 | 桶 `tokwork-backup`，`RCLONE_REMOTE=r2` / `RCLONE_PATH=tokwork-backup` | ✅ 已配，随每日 cron 自动上传 |
+| Hetzner 付费磁盘备份（+20%，约 +$2.70/月） | 整机快照，7 槽轮转 | ✅ 已开（2026-10-10） |
 
-**已知缺口**：备份目前只在本机磁盘上，和原库同盘。真出事（整机故障 / 账号级事故）
-会一起没。下一步应配 rclone 到第三方对象存储。
+**三层各防什么**：Hetzner 快照防整机故障；`pg_dump` 防数据逻辑损坏（误删 / 应用 bug 写坏）；
+R2 异地防"Hetzner 账号级事故"。缺任何一层都留有整类盲区。
+
+### 7.1 R2 配置要点（踩过的坑）
+
+R2 的 bucket 在 **`28fa4860b37a3bb670d098eb493b781e`** 这个 Cloudflare 账号里
+（不是 CLI 认证的 `372be715…` 那个）。
+
+token 类型：**Account API Token**，权限 **对象读和写**，**仅作用于 `tokwork-backup`**。
+
+rclone 配置必须加两处，否则一定失败：
+
+```ini
+[r2]
+type = s3
+provider = Cloudflare
+access_key_id = ...
+secret_access_key = ...
+endpoint = https://28fa4860b37a3bb670d098eb493b781e.r2.cloudflarestorage.com
+acl = private
+no_check_bucket = true   # ⚠️ 必需，见下
+```
+
+1. **`no_check_bucket = true` 是必需的**。桶级 token 没有 `CreateBucket` 权限，
+   而 rclone 默认会"检查目标桶是否存在"，HEAD 失败后去建桶 → 403。
+   报错形式极具误导性：
+   `failed to prepare upload: operation error S3: CreateBucket ... AccessDenied`
+   ——看起来像"没写权限"，其实是"没建桶权限"。
+2. **自检不能写 `rclone lsd r2:`**（列所有桶要账号级权限，桶级 token 必然 403）。
+   要按具体桶测：`rclone lsd r2:tokwork-backup`。
+
+另外 Ubuntu 26.04 自带的 `rclone` 是 **1.60.1-DEV**（太老，对 R2 支持有问题，报错也不清晰）。
+换成官方最新版后错误信息立刻变得可诊断：
+
+```bash
+curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+cd /tmp && mkdir -p x && unzip -q -o rclone.zip -d x
+install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
+```
 
 ## 8. 运维脚本（`ops/`）
 
@@ -218,17 +266,19 @@ Postgres 关键参数：`shared_buffers=128MB`、`max_connections=80`、`work_me
 | `ops/deploy/Caddyfile` | 只服务 API 域名，SSE 不缓冲，超时 600s |
 | `ops/deploy/gen-env.sh` | 在服务器本地生成 `.env`（PG/Redis 密码、SESSION_SECRET、CRYPTO_SECRET） |
 | `ops/deploy/backup.sh` | 每日 pg_dump + 自检 + 清理 + 可选 rclone |
+| `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
 | `ops/tokwork-bootstrap-test.yaml` | 早期 DigitalOcean 试机的 cloud-init，**已不用**（DO 那台已删） |
 
 ## 9. 还没做（计划，不是现状）
 
 - [ ] 确认管理员密码足够强（初始化时自设，系统无默认账号）；删除默认令牌
-- [ ] 开启 Hetzner 付费磁盘备份（约 +$2.70/月）
-- [ ] 配 rclone 异地备份到对象存储
+- [ ] **把 Pages 项目从 `372be715…` 迁到 `28fa4860…`**（同账号后 Access 才配得动）
 - [ ] 配 Cloudflare Access 保护 `admin.tokwork.com`
 - [ ] 决定是否把 `/api/*` 从 `api.tokwork.com` 上摘掉（Caddy 加路径规则）
 - [ ] 宣传站（`tokwork.com` / `www`）—— 目前 apex 仍是旧站
 - [ ] `CRYPTO_SECRET` 另存到密码管理器（**丢了所有上游 Key 解码失败**）
+
+> 已完成（2026-10-10）：Hetzner 付费磁盘备份已开；rclone → R2 异地备份已配并实测通过。
 
 ## 10. 排错速查
 
