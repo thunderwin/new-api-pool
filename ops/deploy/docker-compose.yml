@@ -108,6 +108,12 @@ services:
       # 前端（React SPA）由 Cloudflare Pages 托管，本服务只做 API：
       # 设了这个变量后，未注册的网页路径会 301 跳到前端，/api/* 和 /v1/* 不受影响。
       FRONTEND_BASE_URL: https://${ADMIN_DOMAIN}
+      # 允许「带 Cookie 的跨域请求」的额外 Origin（逗号分隔）。
+      # middleware/cors.go 的 trustedCredentialOrigins() 读它，命中才回显具体
+      # Origin + Allow-Credentials；否则只给 `*`（不带凭证）。
+      # ⚠️ 必须在这里透传，光写进 .env 不会进容器 —— 漏了会在浏览器里静默失败，
+      #    表现为「登录成功但刷新就掉线」。
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
       # 让 Go 的 GC 在 576M cgroup 限制内更积极回收
       GOMEMLIMIT: 460MiB
     volumes:

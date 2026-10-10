@@ -563,6 +563,85 @@ curl -X POST http://127.0.0.1:3000/api/channel/ \
 
 ---
 
+## 8.6 客户门户（P0，2026-10-10 上线）
+
+### 结论先行：**不需要新起项目，也不需要改营销站的 admin**
+
+查证后发现三件事，直接推翻了「另起一个静态门户」和「改造营销站 admin」两条路：
+
+1. **客户本来就看不到复杂后台**。new-api 按角色切侧边栏
+   （`controller/user.go` 的 `calculateUserPermissions` / `generateDefaultSidebarConfig`）：
+   普通用户 `admin: false`，**完全看不到渠道 / 号池 / 系统设置 / 用户管理**。
+2. **「模型 + 价格」页是现成的**：`web/src/components/table/model-pricing/`，
+   挂在顶栏（`HeaderNavModules.pricing`），而且 **`requireAuth: false` 默认免登录可见**。
+3. **侧边栏是纯配置**（`SidebarModulesAdmin` / `HeaderNavModules` 两个 option），
+   改它不用动代码。
+
+营销站的 `/admin` 是 **Payload CMS 的内容管理后台**（Pages/Posts/Media/ContactRequests
+的 CRUD），不是门户；把它开门给客户等于暴露内容表，做不出「只显示我的 Key 和价格」。
+
+### P0 实际做的四件事
+
+| # | 内容 | 类型 |
+|---|---|---|
+| 1 | `/api/pricing` 暴露 `image_size_price`（`model/pricing.go` 的 `Pricing` 结构 + `updatePricing`） | 代码 |
+| 2 | 价格页显示**起价 + 按规格明细**（`web/src/helpers/utils.jsx` 的 `getModelPriceItems`） | 代码 |
+| 3 | 侧边栏瘦身：关掉客户用不到的 `console.midjourney`（其余保留） | 配置 |
+| 4 | 客户域名 `console.tokwork.com` → 同一个 Pages 项目 `tokwork-panel` | 基建 |
+
+**为什么要做 1 和 2**：上游对同一模型的不同尺寸收费不同（`gpt-image-2-fd`
+1K $0.0234 / 4K $0.0563，差 2.4 倍）。价格页只显示兜底固定价的话，客户按 1K 下单、
+传 4K 被多扣，**必然产生争议**。修完实测：
+
+```
+gpt-image-2-fd   起价 $0.023 / 次
+                 按规格  1K $0.023 · 2K $0.028 · 4K $0.056
+gpt-image-2      模型价格 $0.009 / 次        ← 单档模型不变
+```
+
+### 客户域名的两个必备配置
+
+1. **DNS**：`console` CNAME → `tokwork-panel.pages.dev`，**仅 DNS（灰云）**
+   —— 和 `admin` 一致。Pages 自定义域在**同账号**下才能激活（这次带了 `zone_tag`）。
+2. **CORS 白名单**：`console.tokwork.com` 必须进后端的可信 Origin，否则客户
+   **登录成功但刷新就掉线**（跨域 XHR 不带 cookie）。
+
+```bash
+# .env
+TRUSTED_ORIGINS=https://console.tokwork.com
+```
+
+> ⚠️ **踩过的坑**：光把 `TRUSTED_ORIGINS` 写进 `.env` **不生效**——
+> `ops/deploy/docker-compose.yml` 的 `environment:` 必须显式透传它，否则变量进不了容器。
+> 症状极具迷惑性：`/api/*` 预检仍返回 200（拿到的是 `*`），但浏览器因为凭证模式
+> 不接受 `*` 而静默失败。已在 compose 里补上并加了注释。
+
+实测三个 Origin 的行为（2026-10-10）：
+
+| Origin | Allow-Origin | Allow-Credentials |
+|---|---|---|
+| `https://admin.tokwork.com` | 回显该 Origin | `true` |
+| `https://console.tokwork.com` | 回显该 Origin | `true` |
+| `https://evil.example.com` | `*` | 不带 |
+
+### 两个门户的分工
+
+| 域名 | 谁用 | 说明 |
+|---|---|---|
+| `console.tokwork.com` | **客户** | 模型价格页（免登录）+ 令牌/日志/充值/个人设置 |
+| `admin.tokwork.com` | **你自己** | 同一个 Pages 项目的同一个 SPA，但用 admin 账号登录，能看到渠道/号池 |
+
+> 两个域名指向**同一个 Pages 项目**，界面是同一份代码 —— 差别只在登录的账号角色。
+> 所以别指望靠域名隔离权限，真正的隔离是 new-api 的角色控制。
+
+### 后续（P1/P2，还没做）
+
+- P1：如果要和营销站视觉统一（Kumo 设计系统），改 `web/src/components/table/model-pricing/`
+  那几个组件 + 登录页即可 —— 这是**硬分支，不合并上游**，改了不产生分叉负担
+- P2：文档入口。现成有 `HeaderNavModules.docs`，指过去即可
+
+---
+
 ## 9. 还没做（计划，不是现状）
 
 - [ ] 确认管理员密码足够强（初始化时自设，系统无默认账号）；删除默认令牌

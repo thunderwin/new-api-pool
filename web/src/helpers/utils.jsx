@@ -752,8 +752,31 @@ export const calculateModelPrice = ({
     const priceUSD = parseFloat(record.model_price) * usedGroupRatio;
     const displayVal = displayPrice(priceUSD);
 
+    // 图片模型按输出规格定价（ImageSizePrice）。必须一起给前端：
+    // 只显示兜底固定价的话，客户按 1K 的价下单、传 4K 会被多扣，必然产生争议。
+    let sizePriceItems = null;
+    if (record.image_size_price && typeof record.image_size_price === 'object') {
+      const order = ['0.5K', '1K', '2K', '4K'];
+      sizePriceItems = Object.entries(record.image_size_price)
+        .map(([variant, value]) => ({
+          variant,
+          numeric: parseFloat(value) * usedGroupRatio,
+        }))
+        .filter((x) => !Number.isNaN(x.numeric))
+        .sort((a, b) => {
+          const ia = order.indexOf(a.variant);
+          const ib = order.indexOf(b.variant);
+          if (ia >= 0 && ib >= 0) return ia - ib;
+          if (ia >= 0) return -1;
+          if (ib >= 0) return 1;
+          return a.variant.localeCompare(b.variant);
+        })
+        .map((x) => ({ variant: x.variant, value: displayPrice(x.numeric), numeric: x.numeric }));
+    }
+
     return {
       price: displayVal,
+      sizePriceItems,
       isPerToken: false,
       isTokensDisplay: false,
       usedGroup,
@@ -884,6 +907,30 @@ export const getModelPriceItems = (
         suffix: unitSuffix,
       },
     ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+  }
+
+  // 按次计费的图片模型：显示「起价」+ 按输出规格的明细，
+  // 避免客户只看到兜底价、传大尺寸时被多扣而投诉。
+  if (priceData.sizePriceItems && priceData.sizePriceItems.length > 1) {
+    const cheapest = priceData.sizePriceItems.reduce((a, b) =>
+      a.numeric <= b.numeric ? a : b,
+    );
+    return [
+      {
+        key: 'fixed',
+        label: t('起价'),
+        value: cheapest.value,
+        suffix: ` / ${t('次')}`,
+      },
+      {
+        key: 'size-prices',
+        label: t('按规格'),
+        value: priceData.sizePriceItems.map((x) => `${x.variant} ${x.value}`).join('  ·  '),
+        suffix: '',
+      },
+    ].filter(
+      (item) => item.value !== null && item.value !== undefined && item.value !== '',
+    );
   }
 
   return [
