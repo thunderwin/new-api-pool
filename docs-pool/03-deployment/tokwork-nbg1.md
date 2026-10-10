@@ -457,6 +457,50 @@ apiRouter.GET("/dashboard/billing/subscription", middleware.TokenAuth(), ...)
 > 若要让响应直接带金额，需要改 fork 代码（流式 SSE 里夹带金额尤其麻烦），
 > 而业界惯例是：响应只给 token，成本走面板 + billing 接口。
 
+### 上游定价同步（`ops/sync-upstream-pricing.py`，2026-10-10）
+
+**上游定价是公开可读的**，但有两个接口，作用完全不同：
+
+| 接口 | 内容 | 是否可用作定价基准 |
+|---|---|---|
+| `GET /api/pricing` | 79 个模型的**官方标价**（`model_ratio` / `model_price` / 相对倍率） | ❌ **会定高几十倍** |
+| `GET /api/public/marketplace?model=X` | **每个渠道的真实售价**（`user_price`、`media_pricing.billing_prices` 按规格） | ✅ 真实成本 |
+
+差别有多大：`gpt-image-2` 在 `/api/pricing` 里标 `model_price = $0.25`，
+实际每次只扣 **$0.0075**（33 倍差）。因为 APIMaster 有一层**折扣**，
+折扣率逐模型不同（`gpt-5.6-sol` 官方输入价 $5/M → 实付 $0.223268/M，约 95.5% off）。
+
+> ⚠️ 本 fork 自带的「上游定价同步」（`/api/ratio_sync/fetch`，见 `controller/ratio_sync.go`）
+> 读的正是 `/api/pricing`。**对 APIMaster 这个上游直接用会把报价定高 33 倍**，
+> 所以另写了 `ops/sync-upstream-pricing.py`，改从 marketplace 取真实售价。
+
+**多渠道价差**：79 个模型里 **57 个**存在多渠道价差
+（`gpt-image-2`：$0.0075 ↔ $0.325，4~5 条渠道，**43 倍**）。
+APIMaster 便宜优先，所以**常态成本 = 最低价**。
+
+**单位换算**（两边 `QuotaPerUnit` 都是 500000）：
+
+- marketplace 的 `user_price` **单位随模型类型变化**，必须区分：
+  - 带 `media_pricing` → **按张**（`unit: "image"`）
+  - 不带 → **$/百万输入 token**（核验：`gpt-5.6-sol` 官方输入价 $5/M ↔ `model_ratio` 2.5）
+- 本系统 `$/M = 2 × model_ratio`，所以 `our_model_ratio = upstream_$/M / 2`
+- 相对倍率（`completion_ratio` / `cache_ratio` / `image_ratio`）**不加价**，原样照搬
+
+**已知的两处取舍**（脚本已标注）：
+
+1. **16 个图片模型有 1K/2K/4K 多档价**，而本系统的固定价是「每次一个价」——
+   按 1K 定价会在大尺寸上亏（保守可用 `--variant max`）
+2. **9 个分段/表达式计费模型**（`billing_mode = tiered_expr`，如 `gpt-5.6-sol`）
+   无法用单一 ratio/price 表达，脚本**跳过**，需人工处理
+
+用法：
+
+```bash
+python3 ops/sync-upstream-pricing.py                    # dry-run，只打印
+python3 ops/sync-upstream-pricing.py --markup 1.25      # 加价 25%
+python3 ops/sync-upstream-pricing.py --markup 1.25 --apply
+```
+
 ### 运维用的管理员 API 令牌
 
 管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
