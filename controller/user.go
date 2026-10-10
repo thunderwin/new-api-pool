@@ -218,7 +218,15 @@ func Register(c *gin.Context) {
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
-	if common.EmailVerificationEnabled {
+	// 邮箱：上游只在**开启邮箱验证**时才落库，因为没验证过的邮箱可能是别人的。
+	// 但我们的客户门户把邮箱当作"找回密码的唯一凭据"（见 www.tokwork.com/register），
+	// 丢掉它等于注册时承诺了一个不存在的能力 —— 实测 2026-10-10：
+	// 用户填了邮箱、库里却是空，`/api/reset_password` 永远匹配不到人。
+	//
+	// 所以这里改成"填了就存"（当 EmailVerificationEnabled 为真时本来就要求验证码，
+	// 那条路径不受影响）。代价是邮箱可能未经校验，换来的是找回密码这条路能用；
+	// 真要防冒用，正确的做法是把邮箱验证打开（需要配 SMTP）。
+	if common.EmailVerificationEnabled || user.Email != "" {
 		cleanUser.Email = user.Email
 	}
 	if err := cleanUser.Insert(inviterId); err != nil {

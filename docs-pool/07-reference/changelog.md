@@ -13,6 +13,16 @@
 
 ---
 
+## v0.5.8 — 注册时保留邮箱 + 客户门户改用 Kumo 组件（2026-10-10）
+
+| 类型 | 变更 |
+|---|---|
+| `🐛` | `controller/user.go` 的 `Register`：**用户填了邮箱就落库**。上游只在 `EmailVerificationEnabled` 为真时才存邮箱，而我们没开邮箱验证 —— 结果是注册表单推荐用户填邮箱（找回密码要用），库里却永远是空，`/api/reset_password` 永远匹配不到人。实测：注册时带 email，查库确认已存 |
+| `*` | 客户门户（在营销站仓库 `homepage/`）改成用 `@cloudflare/kumo` 的**组件**而不是手搓 CSS：`Button` / `Input` / `Table` / `LayerDialog` / `Badge` / `Empty` / `Meter` + `@phosphor-icons/react`。之前只用了它的设计令牌，观感"像但不够精致"（缺 focus ring / loading / 焦点陷阱 / 空状态）—— 见 lessons-learned H8 |
+
+> 邮箱留了空的情况：用户不填就不写，`/api/reset_password` 依然找不到人（这一页的文案
+> 已经说明"没有邮箱就只能联系客服"）。
+
 ## v0.5.7 — 自研客户门户（whoami 接口 + 账号入口搬去营销站 + 面板只留亮色）（2026-10-10）
 
 产品决定：**客户看到的一切自己写**，不用 new-api 自带的 SPA。
