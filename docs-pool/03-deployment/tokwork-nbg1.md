@@ -129,7 +129,7 @@ HTTP 超时掐断 LLM 长流式响应（524）。
 |---|---|---|---|---|
 | `api.tokwork.com` | A | `2.31.8.21` | **仅 DNS（灰云）** | **只做 API**：客户调 `/v1/*`，面板跨域调 `/api/*`；网页路径 301 跳 admin |
 | `admin.tokwork.com` | CNAME | `tokwork-admin.pages.dev` | **仅 DNS（灰云）** | 后台面板（Cloudflare Pages）——唯一的界面入口 |
-| `tokwork.com` / `www` | — | 仍指向 `47.245.87.159` | — | 旧站，**本次未动** |
+| `tokwork.com` + `www.tokwork.com` | Worker 自定义域 | Worker `tokwork-homepage` | 橙云 | 宣传站（两条都是自定义域，同源同内容） |
 
 `tokwork.com` 这个 zone 在**另一个 Cloudflare 账号**里，与本项目使用的
 `Info@yijianspace.com's Account`（Pages 项目所在账号）不同。
@@ -353,10 +353,13 @@ curl -X POST http://127.0.0.1:3000/api/channel/ \
 - [ ] **把 Pages 项目从 `372be715…` 迁到 `28fa4860…`**（同账号后 Access 才配得动）
 - [ ] 配 Cloudflare Access 保护 `admin.tokwork.com`
 - [ ] 决定是否把 `/api/*` 从 `api.tokwork.com` 上摘掉（Caddy 加路径规则）
-- [ ] 宣传站（`tokwork.com` / `www`）—— 目前 apex 仍是旧站
 - [ ] `CRYPTO_SECRET` 另存到密码管理器（**丢了所有上游 Key 解码失败**）
 
 > 已完成（2026-10-10）：Hetzner 付费磁盘备份已开；rclone → R2 异地备份已配并实测通过。
+> 已完成（2026-10-10）：宣传站 apex 已从死掉的 `47.245.87.159` 切到 Worker
+> `tokwork-homepage`（先删掉 apex 的 A 记录，再加 Worker 自定义域 ——
+> Cloudflare 不允许自定义域与已有 DNS 记录冲突，会报
+> `Hostname ... already has externally managed DNS records`）。
 
 ## 10. 排错速查
 

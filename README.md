@@ -26,7 +26,7 @@
 | 后端（new-api + Postgres + Redis + Caddy） | **Hetzner Cloud**，纽伦堡 `nbg1`，`2.31.8.21` |
 | 客户 API | `https://api.tokwork.com`（灰云直连 Hetzner，避免 Cloudflare 100s 超时掐断流式响应） |
 | 管理面板（React SPA） | `https://admin.tokwork.com` → **Cloudflare Pages** 项目 `tokwork-panel` |
-| 宣传站 | `www.tokwork.com` → Cloudflare Worker `tokwork-homepage` |
+| 宣传站 | `tokwork.com` + `www.tokwork.com` → Cloudflare Worker `tokwork-homepage`（同为自定义域，同源同内容） |
 | 异地备份 | **Cloudflare R2** 桶 `tokwork-backup`（每日 `pg_dump` 自动上传） |
 
 详细部署记录（含资源预算、构建链路、踩坑、排错速查）：
