@@ -426,6 +426,37 @@ python3 /opt/new-api-pool/reconcile-upstream.py --since 2026-10-10 --until 2026-
 > 也就是说当前不是"赚太少"，而是**定价严重偏高**。要对外卖必须先按
 > `reconcile-upstream.py` 跑出来的真实成本定价。
 
+### 下游客户能看到什么成本信息（2026-10-10 实测）
+
+**API 响应里没有金额**——只有 `usage`（token 数），响应头也没有任何计费字段：
+
+```
+返回体顶层: ['created', 'data', 'usage']
+响应头    : 无 quota / cost / billing
+（但本系统自己的 logs 表逐笔记了 quota，例：79313 = $0.158626）
+```
+
+**但客户有 3 条路能查到自己的花费，都用同一把 `sk-` key：**
+
+| 方式 | 命令 | 返回 |
+|---|---|---|
+| 逐笔明细 | `GET /api/log/token?p=0&page_size=N` + `Authorization: Bearer sk-xxx` | `[{model_name, quota, prompt_tokens, completion_tokens, ...}]`，`quota/500000` = USD |
+| 累计花费 | `GET /dashboard/billing/usage`（或 `/v1/...`） | `{"object":"list","total_usage":56.5278}`（**美分**） |
+| 额度上限 | `GET /dashboard/billing/subscription` | `{"soft_limit_usd":...,"hard_limit_usd":...}` |
+
+外加面板 `/console/log` 页有「花费」列（登录可见）。
+
+对应路由（`router/api-router.go` / `router/dashboard.go`）：
+
+```go
+logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)   // 用 sk- key
+apiRouter.GET("/dashboard/billing/subscription", middleware.TokenAuth(), ...)
+```
+
+> 结论：**"响应里看不到成本"成立，但"客户查不到成本"不成立** —— 事后可查，只是不在响应那一刻。
+> 若要让响应直接带金额，需要改 fork 代码（流式 SSE 里夹带金额尤其麻烦），
+> 而业界惯例是：响应只给 token，成本走面板 + billing 接口。
+
 ### 运维用的管理员 API 令牌
 
 管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
