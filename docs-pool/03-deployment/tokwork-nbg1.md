@@ -380,6 +380,52 @@ apimaster **本身也是 new-api**（`GET /api/status` 返回的结构与本项�
 之后 `/api/log/` 就能**逐笔**拉上游消耗，和本项目 `logs` 表的用户侧 `quota`
 按时间+模型配对，即可算出**真实毛利**（两边没有共同的 request id，只能按时间窗配对，有噪声）。
 
+> **更正**：`/api/log/` 是**管理员**接口，普通用户账号会返回
+> `Unauthorized, insufficient privileges`。用户级的是这两个（从面板的网络请求里抓到）：
+>
+> | 接口 | 用途 |
+> |---|---|
+> | `GET /api/log/self?p=1&page_size=100&start_timestamp=&end_timestamp=` | **逐笔明细** |
+> | `GET /api/log/self/stat?...` | 汇总（`{quota, rpm, tpm}`） |
+>
+> 都需要 `Authorization: Bearer <账号 access token>`。
+>
+> 逐笔记录里最有用的字段：`model_name` / `prompt_tokens` / `completion_tokens` /
+> `quota` / `created_at` / `request_id` / `content`，以及 `other`（JSON）里的
+> 计费明细 —— `ch_input_price`、`model_price`、`group_ratio`、
+> **`fallback_triggered`（是否降级到更贵的上游，正是"价格浮动"的开关）**。
+
+### 上游成本 ↔ 下游收入 的配对（`ops/reconcile-upstream.py`）
+
+**两边没有共同的 request id**：各跳各生成。实测同一笔调用：
+
+```
+本系统：202610100341176 369241458268d9d6uUejzAJq    tokens 3/1650
+上游：  202610101176... 516005558268d9d6ejqe9RrL    tokens 3/1650
+        └─ 时间戳前缀相同（同一秒）        └─ token 数完全一致
+```
+
+**配对键 = (模型, prompt_tokens, completion_tokens, 秒级时间戳 ±5s)**。
+token 数两边是同一个值（都是上游返回的 usage），同模型下几乎唯一，叠加时间窗后实践可 1:1。
+
+`ops/reconcile-upstream.py` 实现了这个配对并输出真实毛利：
+
+```bash
+python3 /opt/new-api-pool/reconcile-upstream.py --hours 24
+python3 /opt/new-api-pool/reconcile-upstream.py --since 2026-10-10 --until 2026-10-11
+```
+
+首次实测（2026-10-10）：下游 2 笔全部配对成功、0 笔未配对；上游 5 笔里有 3 笔未被认领
+（那 3 笔是直接打上游、没走中转的测试调用 —— 判断正确）。
+
+**两边 `quota_per_unit` 都是 500000**，所以 USD = `quota / 500000`，可直接比。
+实测某一笔：上游成本 `3938/500000 = $0.007876`，下游收入 `123863/500000 = $0.247726`
+→ 毛利 96.8%、加价 31.5x。
+
+> ⚠️ 加价 31.5x 是因为**图片模型还没配价格**，系统走了兜底 `model_ratio = 37.5`。
+> 也就是说当前不是"赚太少"，而是**定价严重偏高**。要对外卖必须先按
+> `reconcile-upstream.py` 跑出来的真实成本定价。
+
 ### 运维用的管理员 API 令牌
 
 管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
