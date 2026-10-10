@@ -15,6 +15,59 @@
 
 ---
 
+## ⚠️ 部署信息（改代码前必读）
+
+> 这一节是给**未来的自己/协作者**看的。搞错账号是这套部署最容易翻车的地方。
+
+### 生产环境在哪
+
+| 部分 | 位置 |
+|---|---|
+| 后端（new-api + Postgres + Redis + Caddy） | **Hetzner Cloud**，纽伦堡 `nbg1`，`2.31.8.21` |
+| 客户 API | `https://api.tokwork.com`（灰云直连 Hetzner，避免 Cloudflare 100s 超时掐断流式响应） |
+| 管理面板（React SPA） | `https://admin.tokwork.com` → **Cloudflare Pages** 项目 `tokwork-panel` |
+| 宣传站 | `www.tokwork.com` → Cloudflare Worker `tokwork-homepage` |
+| 异地备份 | **Cloudflare R2** 桶 `tokwork-backup`（每日 `pg_dump` 自动上传） |
+
+详细部署记录（含资源预算、构建链路、踩坑、排错速查）：
+[`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md)
+
+### Cloudflare 账号（**别搞错**）
+
+本项目所有 Cloudflare 资源（tokwork.com 的 zone、Pages 项目、R2 桶、Worker）
+都在这个账号下：
+
+```
+Cloudflare Account ID: 28fa4860b37a3bb670d098eb493b781e
+```
+
+**陷阱**：CLI 的默认登录身份**不是**这个账号。
+`wrangler` / `cf` 默认登录的是 `Info@yijianspace.com's Account`（`372be715…`），
+拿它去部署会把资源建到错误的账号里 —— 表现为自定义域名绑不上、跨账号 CNAME 出怪问题
+（2026-10-10 实际踩过：Pages 项目建到了 `372be715…`，导致 `admin.tokwork.com`
+出现 308 死循环）。
+
+**正确做法**：部署前显式指定账号与 token。
+
+```bash
+cd web
+CLOUDFLARE_API_TOKEN=<token> \
+CLOUDFLARE_ACCOUNT_ID=28fa4860b37a3bb670d098eb493b781e \
+  wrangler pages deploy dist --project-name tokwork-panel
+```
+
+前端已放 `web/wrangler.jsonc` 声明项目名与产物目录（Pages 的配置文件**不支持**
+`account_id` 字段，账号只能走环境变量）。
+
+### 其他容易忘的
+
+- 前端构建必须注入 `VITE_REACT_APP_SERVER_URL=https://api.tokwork.com`，
+  否则 `web/src/helpers/api.js` 的 axios baseURL 会退化成相对路径。
+- 后端**不在服务器上编译**：本地交叉编译 linux/amd64 单二进制再传上去。
+- `main.go` 里有 `//go:embed web/dist`，**编后端之前必须先构建前端**。
+
+---
+
 ## 简介 (zh)
 
 `new-api-pool` 是 [QuantumNous/new-api](https://github.com/QuantumNous/new-api) 的硬分支（hard fork），在它的 LLM Gateway 内核之上**深度集成了一个完整的号池（Key Pool）管理系统**——把「上游账号 → API Key → 渠道（Channel）→ 路由（Ability）」这条链路的全部环节做成一级菜单可视化运营，并接入 Telegram 巡检告警、自动注册编排、计费 / 利润看板。

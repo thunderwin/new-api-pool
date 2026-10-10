@@ -1,0 +1,21 @@
+{
+  // 前端（React SPA）托管在 Cloudflare Pages，**不属于**后端那台服务器。
+  //
+  // ⚠️ 本项目使用的 Cloudflare 账号是 28fa4860b37a3bb670d098eb493b781e
+  //    （tokwork.com 的 zone、tokwork* 系列 R2 桶都在这里）。
+  //    换账号部署会导致自定义域名 `admin.tokwork.com` 绑不上（跨账号）。
+  //    注意 CLI 的默认 OAuth 身份可能是另一个账号，别搞混：
+  //      wrangler / cf 默认登录的是 Info@yijianspace.com's Account（372be715…），
+  //      那不是本项目要用的账号。
+  //
+  // 部署：
+  //   CLOUDFLARE_API_TOKEN=<token> CLOUDFLARE_ACCOUNT_ID=28fa4860b37a3bb670d098eb493b781e \
+  //     wrangler pages deploy dist --project-name tokwork-panel
+  //
+  // ⚠️ Pages 的配置文件**不支持** `account_id` 字段（wrangler 会直接报
+  //    "Configuration file for Pages projects does not support account_id"），
+  //    所以账号只能通过环境变量 CLOUDFLARE_ACCOUNT_ID 传。
+  "name": "tokwork-panel",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2026-10-09"
+}

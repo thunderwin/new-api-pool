@@ -134,16 +134,21 @@ HTTP 超时掐断 LLM 长流式响应（524）。
 `tokwork.com` 这个 zone 在**另一个 Cloudflare 账号**里，与本项目使用的
 `Info@yijianspace.com's Account`（Pages 项目所在账号）不同。
 
-> ⚠️ **2026-10-10 更正**：项目的 Cloudflare 资源应该都在
-> **`28fa4860b37a3bb670d098eb493b781e`** 这个账号（tokwork.com 的 zone、
-> `tokwork*` 系列的 R2 桶都在这里）。
-> 但 **`tokwork-admin` 这个 Pages 项目当初被部署到了 `372be715…`
-> （`Info@yijianspace.com's Account`）——放错了账号**，
-> 这也是 `admin.tokwork.com` 那条跨账号 CNAME 出现 308 死循环的根源。
-> **待办**：把 Pages 项目迁到 `28fa4860…`，让 Pages、DNS、R2 同账号。
+> ✅ **2026-10-10 已解决**：项目的 Cloudflare 资源统一在
+> **`28fa4860b37a3bb670d098eb493b781e`** 这个账号
+> （tokwork.com 的 zone、Pages 项目、`tokwork*` 系列 R2 桶、宣传站 Worker）。
 >
-> **待验证**：`372be715…` 与 `28fa4860…` 分属不同的 Cloudflare 登录身份
-> （CLI 认证的是前者，浏览器登录的 `free.lei.sheng@gmail.com` 能访问后者）。
+> 迁移过程：新建 Pages 项目 `tokwork-panel`（不能用原名 `tokwork-admin`——
+> `*.pages.dev` 子域全局唯一，被旧账号里那个项目占着），部署同一份 `dist`，
+> 再把 `admin.tokwork.com` 的 CNAME 从 `tokwork-admin.pages.dev` 改到
+> `tokwork-panel.pages.dev`。同账号后自定义域名一次激活（status `active`），
+> 且带了 `zone_tag` —— 这正是之前跨账号时缺失的东西。
+>
+> **踩过的坑（记下来免得再犯）**：`wrangler` / `cf` 的默认 OAuth 身份是
+> `Info@yijianspace.com`，它能访问的是 `372be715…`，**不是**本项目要用的账号。
+> 用它部署会把资源建错账号。正确做法是显式传
+> `CLOUDFLARE_ACCOUNT_ID=28fa4860…` + 一个该账号下的 API token
+> （见仓库 README 的「部署信息」一节）。
 
 > 已核实 2026-10-10：`admin` 这条是**灰云**（解析结果是 CNAME 链直接到
 > `172.66.44.81 / 172.66.47.175`，不是 Cloudflare 代理 IP `104.21.x`）。
