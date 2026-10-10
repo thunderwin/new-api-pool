@@ -96,6 +96,10 @@ body {
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial,
     sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  /* 面板只有亮色（夜间模式已下线，见 context/Theme/index.jsx）。
+   * 声明 color-scheme 是为了让**浏览器原生控件**（滚动条、日期选择器、
+   * 自动填充底色）也走亮色 —— 系统是暗色模式时，它们不会自己变暗。 */
+  color-scheme: light;
   color: var(--semi-color-text-0);
   background-color: var(--semi-color-bg-0);
 }

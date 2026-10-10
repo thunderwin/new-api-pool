@@ -134,6 +134,42 @@ func Logout(c *gin.Context) {
 	})
 }
 
+// WhoAmI 只凭 session cookie 返回"当前登录的是谁"，**不需要 New-API-User 头**。
+//
+// 为什么需要它：本项目所有 /api/user/self 之类的接口都强制要求
+// `New-API-User: <id>` 头（middleware/auth.go 的 authHelper）。而自研的客户门户
+// （www.tokwork.com/console，Next.js）是**跨域**调用的：它必须先知道用户 id 才能
+// 拼这个头，但那个 id 只在 session cookie 里（HttpOnly，JS 读不到），而
+// /api/user/self 又要先有这个头 —— 死循环。这个接口只做一件事：把 session 里
+// 已经认证过的身份告诉调用方。
+//
+// 安全性：它不返回任何密钥、也不放大权限。攻击者能调用的话，拿到的也只是
+// "你自己是谁"；写入类接口依然要求 New-API-User 与 session 一致
+// （少了它等于绕过 authHelper 里那道"以别人身份操作"的检查）。
+// 另外 session cookie 是 SameSite=Strict，跨站请求根本带不上 cookie。
+func WhoAmI(c *gin.Context) {
+	session := sessions.Default(c)
+	id := session.Get("id")
+	if id == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"id":       id,
+			"username": session.Get("username"),
+			"role":     session.Get("role"),
+			"status":   session.Get("status"),
+			"group":    session.Get("group"),
+		},
+	})
+}
+
 func Register(c *gin.Context) {
 	if !common.RegisterEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)

@@ -36,15 +36,16 @@
 
 | 用途 | 地址 | 谁托管 |
 |---|---|---|
-| 宣传站 + **登录框** | `https://www.tokwork.com/login` | Worker `tokwork-homepage` |
-| 文档 | `https://www.tokwork.com/docs` | 同上 |
-| 价格（实时，读 `/api/pricing`） | `https://www.tokwork.com/pricing` | 同上 |
-| **客户控制台** | `https://console.tokwork.com` | Pages `tokwork-panel` |
-| 管理面板（只有自己用） | `https://admin.tokwork.com` | 同一个 Pages 项目 |
+| 宣传站 + 账号入口（登录/注册/找回密码） | `https://www.tokwork.com` | Worker `tokwork-homepage` |
+| **客户门户**：概览 / API Key / 调用历史 / 账户 | `https://www.tokwork.com/console` | 同一套 Next.js 应用 |
+| 文档 / 价格 / 状态 | `https://www.tokwork.com/docs` · `/pricing` · `/status` | 同上 |
+| 旧门户域名 | `console.tokwork.com` → 301 到 `/console` | 同一个 Worker |
+| 管理面板（**只有自己用**） | `https://admin.tokwork.com` | Pages `tokwork-panel`（new-api 自带 SPA） |
 | API | `https://api.tokwork.com/v1` | Hetzner（灰云直连） |
 
-营销站的登录框登完直接进 console，不用二次登录 —— 机制见
-[`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md) §8.6 的 SSO 一节。
+**客户看的一切都是我们自己写的**（2026-10-10 定的方向）：门户是营销站这套 Next.js
+应用里的 `/console/**`，不再用 new-api 自带的界面。机制与取舍见
+[`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md) §8.6.9。
 
 ### 当前在售（2026-10-10 核实）
 

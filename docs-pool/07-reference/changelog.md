@@ -13,6 +13,32 @@
 
 ---
 
+## v0.5.7 — 自研客户门户（whoami 接口 + 账号入口搬去营销站 + 面板只留亮色）（2026-10-10）
+
+产品决定：**客户看到的一切自己写**，不用 new-api 自带的 SPA。
+客户只需要「生成自己的 Key / 看调用历史 / 看模型价格」，而那个 SPA 是管理员后台。
+门户落在营销站（`www.tokwork.com/console/**`，Next.js + Kumo 令牌），
+`console.tokwork.com` 301 过去；`admin.tokwork.com` 上的 SPA 只留给自己用。
+
+| 类型 | 变更 |
+|---|---|
+| `+` | `controller/user.go`：`WhoAmI` —— 只认 session cookie、**不要求 `New-API-User` 头**，返回当前登录者身份。自研门户靠它解决"要先有 id 才能拼头、而 id 只在 cookie 里"的死循环 |
+| `+` | `router/api-router.go`：`GET /api/user/whoami` 路由（**别给它加 UserAuth()**，加了就回到死循环） |
+| `*` | `web/src/App.jsx`：`/login`、`/register`、`/reset`、`/user/reset` 四条路由改成 `AuthSiteRedirect` —— 账号入口统一由营销站负责（`helpers/auth.jsx`，可用 `VITE_AUTH_SITE_URL` 覆盖站点地址） |
+| `*` | `web/src/context/Theme/index.jsx`：**夜间模式下线**，永远亮色；挂载时清掉 `body[theme-mode]` / `html.dark` / 旧的 localStorage 值。`setTheme` 变成空操作（几十处组件还在用它） |
+| `-` | `web/src/components/layout/headerbar/ActionButtons.jsx`：去掉主题切换按钮 |
+| `*` | `web/src/index.css`：声明 `color-scheme: light`，让原生控件（滚动条、日期选择器）也走亮色 |
+| `🐛` | `web/src/components/layout/PageLayout.jsx`：标签页标题和 favicon 改成以 `/api/status` 的 `system_name` / `logo` 为准。原来只在挂载时读一次 localStorage，新访客本地没缓存 → 页头写着自家品牌、标签页却是上游默认名 |
+
+### 影响面
+
+- 客户侧不再出现 new-api 自带界面（唯一残留：admin SPA 页脚那行「设计与开发由 New API」
+  署名 —— 见 `AGENTS.md` 规则 5，刻意保留）。
+- 面板品牌换成自己的（`SystemName` / `Logo` 两个 option），顶栏导航全关、页脚换成自有文案。
+- 旧链接 `console.tokwork.com/**` 自动跳到 `www.tokwork.com/console/**`。
+
+---
+
 ## v0.5.6 — 控制台 Kumo 化 + 营销站 SSO + 尾斜杠 CORS 修复（2026-10-10）
 
 | 类型 | 变更 |

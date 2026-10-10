@@ -43,7 +43,7 @@ const { Sider, Content, Header } = Layout;
 
 const PageLayout = () => {
   const [userState, userDispatch] = useContext(UserContext);
-  const [, statusDispatch] = useContext(StatusContext);
+  const [statusState, statusDispatch] = useContext(StatusContext);
   const isMobile = useIsMobile();
   const [collapsed, , setCollapsed] = useSidebarCollapsed();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -104,18 +104,30 @@ const PageLayout = () => {
   useEffect(() => {
     loadUser();
     loadStatus().catch(console.error);
-    let systemName = getSystemName();
+  }, []);
+
+  /**
+   * 标签页标题与 favicon 跟着**后端配置**走（`SystemName` / `Logo` 选项）。
+   *
+   * 原来只在挂载时读一次 localStorage：新访客本地还没有缓存，
+   * `getSystemName()` 就退回上游默认名 —— 于是页头写着自家品牌、标签页却是别人的名字
+   * （2026-10-10 实测）。这里以 /api/status 的返回为准，localStorage 只作兜底。
+   */
+  useEffect(() => {
+    const status = statusState?.status;
+    if (!status) return;
+    const systemName = status.system_name || getSystemName();
     if (systemName) {
       document.title = systemName;
     }
-    let logo = getLogo();
+    const logo = status.logo || getLogo();
     if (logo) {
-      let linkElement = document.querySelector("link[rel~='icon']");
+      const linkElement = document.querySelector("link[rel~='icon']");
       if (linkElement) {
         linkElement.href = logo;
       }
     }
-  }, []);
+  }, [statusState]);
 
   useEffect(() => {
     let preferredLang;

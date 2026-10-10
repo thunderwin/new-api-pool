@@ -21,16 +21,12 @@ import React, { lazy, Suspense, useContext, useMemo } from 'react';
 import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
-import RegisterForm from './components/auth/RegisterForm';
-import LoginForm from './components/auth/LoginForm';
+import { AuthSiteRedirect, PrivateRoute, AdminRoute } from './helpers';
 import NotFound from './pages/NotFound';
 import Forbidden from './pages/Forbidden';
 import Setting from './pages/Setting';
 import { StatusContext } from './context/Status';
 
-import PasswordResetForm from './components/auth/PasswordResetForm';
-import PasswordResetConfirm from './components/auth/PasswordResetConfirm';
 import Channel from './pages/Channel';
 import Token from './pages/Token';
 import Redemption from './pages/Redemption';
@@ -229,39 +225,19 @@ function App() {
         />
         <Route
           path='/user/reset'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <PasswordResetConfirm />
-            </Suspense>
-          }
+          element={<AuthSiteRedirect path='/user/reset' />}
         />
         <Route
           path='/login'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <AuthRedirect>
-                <LoginForm />
-              </AuthRedirect>
-            </Suspense>
-          }
+          element={<AuthSiteRedirect path='/login' />}
         />
         <Route
           path='/register'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <AuthRedirect>
-                <RegisterForm />
-              </AuthRedirect>
-            </Suspense>
-          }
+          element={<AuthSiteRedirect path='/register' />}
         />
         <Route
           path='/reset'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <PasswordResetForm />
-            </Suspense>
-          }
+          element={<AuthSiteRedirect path='/reset' />}
         />
         <Route
           path='/oauth/github'

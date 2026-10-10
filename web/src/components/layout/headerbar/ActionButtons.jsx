@@ -20,7 +20,6 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import NewYearButton from './NewYearButton';
 import NotificationButton from './NotificationButton';
-import ThemeToggle from './ThemeToggle';
 import LanguageSelector from './LanguageSelector';
 import UserArea from './UserArea';
 
@@ -49,8 +48,6 @@ const ActionButtons = ({
         onNoticeOpen={onNoticeOpen}
         t={t}
       />
-
-      <ThemeToggle theme={theme} onThemeToggle={onThemeToggle} t={t} />
 
       <LanguageSelector
         currentLang={currentLang}

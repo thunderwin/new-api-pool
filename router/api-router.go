@@ -68,6 +68,10 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
 			userRoute.GET("/logout", controller.Logout)
+			// whoami：只认 session cookie，不要 New-API-User 头。
+			// 自研客户门户（www.tokwork.com/console）靠它拿到自己的 id ——
+			// 详见 controller.WhoAmI 的注释，别顺手给它加 UserAuth()。
+			userRoute.GET("/whoami", controller.WhoAmI)
 			userRoute.POST("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)

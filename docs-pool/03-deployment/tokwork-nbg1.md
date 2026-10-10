@@ -565,6 +565,12 @@ curl -X POST http://127.0.0.1:3000/api/channel/ \
 
 ## 8.6 客户门户（P0，2026-10-10 上线）
 
+> ⚠️ **本节记录的是 P0 那一版（把 new-api 自带 SPA 当客户门户）。它已经被
+> 「自研门户」取代** —— 2026-10-10 晚些时候产品改了方向：客户看到的一切都自己写，
+> 就在营销站那套 Next.js 应用里。**现状请看本节末尾的「§8.6.9 自研门户（最终形态）」**，
+> 前面这些保留下来是因为它们解释了当时的取舍，而且 P0 做的两件事（价格页按规格显示、
+> 客户域名）仍然是现状的一部分。
+
 ### 结论先行：**不需要新起项目，也不需要改营销站的 admin**
 
 查证后发现三件事，直接推翻了「另起一个静态门户」和「改造营销站 admin」两条路：
@@ -684,6 +690,10 @@ curl -X PUT http://127.0.0.1:3000/api/option/ \
 
 ### 客户从营销站登录进控制台（SSO 交接，2026-10-10 完成）
 
+> ⚠️ **已被自研门户取代** —— `?sso_user=` 那套 URL 传参在门户搬到营销站之后就删掉了
+> （见 §8.6.9）。下面保留的是当时的实现与踩坑记录，其中"三件事"（CORS 白名单、
+> CSP、身份交接）里的前两条**现在依然成立**。
+
 **用户的诉求**：营销站上有个登录框，登完直接进控制台，不要再登一次。
 
 实现的链路（每一环都实测过）：
@@ -743,6 +753,74 @@ for p in "/api/data/self/" "/api/log/self/" "/api/mj/self/"; do
 done
 # 必须都是 401（走到了鉴权中间件），不能是 301
 ```
+
+### 8.6.9 自研门户（最终形态，2026-10-10）
+
+**产品决定**：客户看到的一切都由自己写，**不要 new-api 自带的那套界面**。
+理由很直接 —— 客户只需要三件事（生成自己的 Key、看调用历史、看模型价格），
+而这套 SPA 是给管理员用的重型后台：中文界面、Semi UI 的另一套设计语言、
+还有一堆客户用不到的入口。既然都要调 API，不如按我们自己的设计系统写四页。
+
+#### 现在的分工
+
+| 域名 / 路径 | 是什么 | 谁用 |
+|---|---|---|
+| `www.tokwork.com/console` | **客户门户**：概览（余额/今日用量/Key 数） | 客户 |
+| `www.tokwork.com/console/keys` | API Key 列表 / 新建 / 停用 / 删除 / 按需显示完整 key | 客户 |
+| `www.tokwork.com/console/logs` | 调用历史（时间/模型/token/花费/耗时/request id + 筛选分页） | 客户 |
+| `www.tokwork.com/console/account` | 账号信息 + 改密码 | 客户 |
+| `www.tokwork.com/login · /register · /reset · /user/reset` | 登录 / 注册 / 找回密码 | 客户 |
+| `console.tokwork.com/**` | **301 到 `www.tokwork.com/console/**`**（旧地址兜底） | — |
+| `admin.tokwork.com` | 原来的 new-api SPA（Pages 项目 `tokwork-panel`），**只给自己用** | 老板 / 运维 |
+
+门户和营销站是**同一套 Next.js 应用**（route group `(portal)`，自己的 root layout），
+所以：一个 origin、一套 cookie、一份 CSP、一套设计令牌。代码在
+`homepage/src/app/(portal)/console/**`，样式 `homepage/src/styles/portal.css`。
+
+#### 后端加的一个接口：`GET /api/user/whoami`
+
+**问题的根**：本项目所有 `/api/*` 都强制要求 `New-API-User: <id>` 头
+（`middleware/auth.go` 的 `authHelper`）。而那个 id 只在 session cookie 里
+（HttpOnly，JS 读不到），门户的第一个请求又必须先知道 id 才能拼头 —— 死循环。
+P0 那版是靠"登录时把 id 塞进 URL（`?sso_user=`）"绕过去的，代价是一堆脆弱的约定。
+
+**解法**（`controller/user.go` 的 `WhoAmI`，路由 `userRoute.GET("/whoami")`）：
+只认 session cookie、不要那个头，返回 session 里已经认证过的身份。
+门户启动时调用它拿 id，缓存到 localStorage，后续请求再带上头。
+
+- 为什么安全：它不返回密钥、不放大权限（攻击者拿到的最多是"你自己是谁"）；
+  写入类接口仍然要求头与 session 一致，那正是 authHelper 里"防以别人身份操作"的检查。
+  session cookie 又是 `SameSite=Strict`，跨站请求根本带不上 cookie。
+- 副作用：`?sso_user=` 与 `web/index.html` 里那段引导脚本**不再需要**（已删）。
+
+**验收**（不带头也必须能认出身份，且其它接口不带头仍然 401）：
+
+```bash
+JAR=$(mktemp)
+curl -s -c "$JAR" -o /dev/null -X POST https://api.tokwork.com/api/user/login \
+  -H 'Content-Type: application/json' -d '{"username":"…","password":"…"}'
+curl -s -b "$JAR" https://api.tokwork.com/api/user/whoami          # 200 + data.id
+curl -s -o /dev/null -w '%{http_code}\n' -b "$JAR" \
+  https://api.tokwork.com/api/user/self                            # 401（缺 New-API-User 头）
+```
+
+#### 面板外观相关的配置（都是 option，不是代码）
+
+| option | 值 | 作用 |
+|---|---|---|
+| `SystemName` | `TokWork` | 页头站点名、浏览器标签标题 |
+| `Logo` | `https://www.tokwork.com/logo.svg` | 页头 logo + favicon |
+| `HeaderNavModules` | 五项全 `false` | 顶栏**不显示任何导航链接** |
+| `Footer` | `© 2026 TokWork · 仅限授权客户使用` | 页脚换成我们自己的文字 |
+| `ServerAddress` | `https://www.tokwork.com` | 密码重置邮件里的链接基址（拼成 `/user/reset?email=&token=`，正好落在营销站的页面上） |
+
+另外 `web/src/context/Theme/index.jsx` 改成**只有亮色**（夜间模式下线）：
+去掉主题切换按钮（`ActionButtons.jsx`）、挂载时清掉 `body[theme-mode]` 与 `html.dark`、
+`index.css` 里声明 `color-scheme: light`。它们只对 admin SPA 有意义，客户门户本来就是亮色。
+
+> 保留的：`admin.tokwork.com` 上那套 SPA 的页脚里有一行"设计与开发由 New API"的
+> 外链署名。那是 AGENTS.md「规则 5」明确保护的上游署名，**不删**；
+> 客户门户（自研的那四页）里没有任何上游标记，只有我们自己的 logo。
 
 ---
 

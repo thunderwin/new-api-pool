@@ -21,7 +21,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useState,
   useEffect,
 } from 'react';
 
@@ -34,75 +33,34 @@ export const useActualTheme = () => useContext(ActualThemeContext);
 const SetThemeContext = createContext(null);
 export const useSetTheme = () => useContext(SetThemeContext);
 
-// 检测系统主题偏好
-const getSystemTheme = () => {
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-      ? 'dark'
-      : 'light';
-  }
-  return 'light';
-};
-
+/**
+ * 主题：**只有亮色**（2026-10-10 下线夜间模式）。
+ *
+ * 为什么不再跟着系统走：面板要和营销站用同一套设计语言，营销站是纯亮色；
+ * 而且暗色下的 Semi 变量（`body[theme-mode=dark]`）会覆盖我们映射的 Kumo 令牌，
+ * 等于同一套界面出现两种观感。产品的决定是：一套皮肤，别让用户选。
+ *
+ * 保留 Provider / useTheme / useSetTheme 的形状 —— 有几十处组件在用，
+ * 直接把 Context 删掉会连带炸掉它们；`setTheme` 变成空操作，旧的
+ * localStorage 值会在挂载时被清掉。
+ */
 export const ThemeProvider = ({ children }) => {
-  const [theme, _setTheme] = useState(() => {
-    try {
-      return localStorage.getItem('theme-mode') || 'auto';
-    } catch {
-      return 'auto';
-    }
-  });
+  const theme = 'light';
+  const actualTheme = 'light';
 
-  const [systemTheme, setSystemTheme] = useState(getSystemTheme());
-
-  // 计算实际应用的主题
-  const actualTheme = theme === 'auto' ? systemTheme : theme;
-
-  // 监听系统主题变化
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
-      const handleSystemThemeChange = (e) => {
-        setSystemTheme(e.matches ? 'dark' : 'light');
-      };
-
-      mediaQuery.addEventListener('change', handleSystemThemeChange);
-
-      return () => {
-        mediaQuery.removeEventListener('change', handleSystemThemeChange);
-      };
-    }
-  }, []);
-
-  // 应用主题到DOM
+  // 清掉可能残留的暗色标记（用户以前选过 dark，或被 @media prefers-color-scheme 影响过）
   useEffect(() => {
     const body = document.body;
-    if (actualTheme === 'dark') {
-      body.setAttribute('theme-mode', 'dark');
-      document.documentElement.classList.add('dark');
-    } else {
-      body.removeAttribute('theme-mode');
-      document.documentElement.classList.remove('dark');
+    body.removeAttribute('theme-mode');
+    document.documentElement.classList.remove('dark');
+    try {
+      localStorage.setItem('theme-mode', 'light');
+    } catch {
+      /* 隐私模式下 localStorage 可能不可写，不影响渲染 */
     }
-  }, [actualTheme]);
-
-  const setTheme = useCallback((newTheme) => {
-    let themeValue;
-
-    if (typeof newTheme === 'boolean') {
-      // 向后兼容原有的 boolean 参数
-      themeValue = newTheme ? 'dark' : 'light';
-    } else if (typeof newTheme === 'string') {
-      // 新的字符串参数支持 'light', 'dark', 'auto'
-      themeValue = newTheme;
-    } else {
-      themeValue = 'auto';
-    }
-
-    _setTheme(themeValue);
-    localStorage.setItem('theme-mode', themeValue);
   }, []);
+
+  const setTheme = useCallback(() => {}, []);
 
   return (
     <SetThemeContext.Provider value={setTheme}>
