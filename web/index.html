@@ -18,38 +18,11 @@
     <meta name="generator" content="new-api" />
     <title>New API</title>
     <!--
-      SSO 交接：营销站（www.tokwork.com）的登录框替我们把 session cookie 种在
-      api.tokwork.com 上，然后带 `?sso_user=<id>` 跳到这里。控制台的 axios 实例是在
-      **模块加载时**读 localStorage 里的 user.id 来拼 `New-API-User` 头的
-      （helpers/api.js 的 getUserIdFromLocalStorage），localStorage 空着就会带
-      `New-API-User: -1` 去请求 /api/user/self，被后端按「用户不匹配」拒掉 ——
-      表现就是「登录成功、跳过来又被踢回登录页」。
-
-      所以必须在这里、在任何 module 之前把它写进去。写完立刻把参数从地址栏抹掉，
-      免得用户复制链接时把 id 带出去（id 本身不是凭证，抹掉只是整洁 + 少一次重复写）。
+      这里曾经有一段 `?sso_user=<id>` 的引导脚本（给"登录在营销站、面板在另一个域"时
+      交接身份用的）。2026-10-10 客户门户改成自研、和营销站同源之后删掉了：
+      自研门户用 `GET /api/user/whoami` 认身份（见 controller/user.go 的 WhoAmI）。
+      这个 SPA 现在只给自己当 admin 后台用，登录走 /login → 营销站 → 登完带 ?next= 回来。
     -->
-    <script>
-      (function () {
-        try {
-          var m = /[?&]sso_user=(\d+)/.exec(window.location.search);
-          if (!m) return;
-          var id = Number(m[1]);
-          var raw = window.localStorage.getItem('user');
-          var current = raw ? JSON.parse(raw) : null;
-          if (!current || Number(current.id) !== id) {
-            // 只写 id：完整的用户对象由 /api/user/self 拉回来后覆盖
-            window.localStorage.setItem('user', JSON.stringify({ id: id }));
-          }
-          window.history.replaceState(
-            null,
-            '',
-            window.location.pathname + window.location.hash,
-          );
-        } catch (e) {
-          /* 任何异常都按「没带参数」处理，用户退回登录页重新登录 */
-        }
-      })();
-    </script>
     <!--umami-->
     <!--Google Analytics-->
   </head>
