@@ -47,11 +47,12 @@ import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 const CARD_STYLES = {
-  container:
-    'w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-md',
+  // 模型图标底：Kumo 的描边图块（原来是 rounded-2xl + shadow-md）
+  container: 'tk-tile w-12 h-12 flex items-center justify-center relative',
   icon: 'w-8 h-8 flex items-center justify-center',
-  selected: 'border-blue-500 bg-blue-50',
-  default: 'border-gray-200 hover:border-gray-300',
+  // 选中态的描边/底色在 index.css 的 .tk-card--selected 里（走 semi 令牌）
+  selected: 'tk-card--selected',
+  default: '',
 };
 
 const PricingCardView = ({
@@ -136,7 +137,7 @@ const PricingCardView = ({
           style={{
             width: 48,
             height: 48,
-            borderRadius: 16,
+            borderRadius: 8,
             fontSize: 16,
             fontWeight: 'bold',
           }}
@@ -254,7 +255,7 @@ const PricingCardView = ({
           return (
             <Card
               key={modelKey || index}
-              className={`!rounded-2xl transition-all duration-200 hover:shadow-lg border cursor-pointer ${isSelected ? CARD_STYLES.selected : CARD_STYLES.default}`}
+              className={`tk-card transition-all duration-200 cursor-pointer ${isSelected ? CARD_STYLES.selected : CARD_STYLES.default}`}
               bodyStyle={{ height: '100%' }}
               onClick={() => openModelDetail && openModelDetail(model)}
             >

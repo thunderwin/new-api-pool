@@ -24,8 +24,7 @@ import { getLobeHubIcon } from '../../../../../helpers';
 const { Paragraph } = Typography;
 
 const CARD_STYLES = {
-  container:
-    'w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-md',
+  container: 'tk-tile w-12 h-12 flex items-center justify-center relative',
   icon: 'w-8 h-8 flex items-center justify-center',
 };
 

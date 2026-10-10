@@ -299,11 +299,20 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
+		// 以下三条是「带尾斜杠」的别名，**不是重复注册**：
+		// gin 对没注册的路径会做 301 去斜杠重定向，而重定向发生在中间件链之前，
+		// 响应里**没有 CORS 头**。前端（web/src/hooks/**）有一批调用写的是
+		// `/api/log/self/`、`/api/data/self/`、`/api/mj/self/`，跨域时浏览器
+		// 看到 301 缺 Access-Control-Allow-Origin 就直接判失败 ——
+		// 表现是「使用日志 / 数据看板打不开，页面白屏」。
+		// 前端已经改成不带尾斜杠的写法，这里保留别名是为了兼容还没刷新到新包的浏览器。
+		logRoute.GET("/self/", middleware.UserAuth(), controller.GetUserLogs)
 
 		dataRoute := apiRouter.Group("/data")
 		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)
 		dataRoute.GET("/users", middleware.AdminAuth(), controller.GetQuotaDatesByUser)
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
+		dataRoute.GET("/self/", middleware.UserAuth(), controller.GetUserQuotaDates) // 见上面 logRoute 的说明
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
@@ -326,6 +335,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		mjRoute := apiRouter.Group("/mj")
 		mjRoute.GET("/self", middleware.UserAuth(), controller.GetUserMidjourney)
+		mjRoute.GET("/self/", middleware.UserAuth(), controller.GetUserMidjourney) // 见 logRoute 的说明
 		mjRoute.GET("/", middleware.AdminAuth(), controller.GetAllMidjourney)
 
 		taskRoute := apiRouter.Group("/task")

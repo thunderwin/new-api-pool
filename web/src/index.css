@@ -24,9 +24,78 @@ body.sidebar-collapsed {
   --sidebar-current-width: var(--sidebar-width-collapsed);
 }
 
+/* ==================== 设计令牌：对齐 Cloudflare Kumo ====================
+ *
+ * 控制台（console.tokwork.com / admin.tokwork.com）跑在 Semi UI 上，营销站
+ * （www.tokwork.com）跑在 Cloudflare 的 Kumo 上。两边要看起来像同一个产品，
+ * 但**不重写组件**：这里只把 Semi 的 CSS 变量映射到 Kumo 的语义值。
+ *
+ * 取值来源：`@cloudflare/kumo` 的 `dist/styles/theme-kumo.css`（MIT），
+ * 与营销站 `homepage/src/styles/tokens.css` 引用的是同一套 token。
+ * 最后核实：2026-10-10（对照 kumo 2.14.0）。
+ *
+ * 注意：Semi 把调色板定义在 `body` 和 `body[theme-mode='dark']` 上
+ * （semi.css 里 `--semi-blue-*` 等），所以覆盖也必须落在**同样的选择器**上，
+ * 只写 `:root` 会被暗色的 `body[theme-mode='dark']` 盖掉。
+ */
 body {
-  font-family: Lato, 'Helvetica Neue', Arial, Helvetica, 'Microsoft YaHei',
-    sans-serif;
+  /* ---------- 品牌蓝 ----------
+   * Kumo 的主操作色是 `--color-kumo-brand` = oklch(57.72% .2324 260)
+   * = rgb(5,109,255)，白字压它 4.53:1（过 AA）。
+   * 这里覆盖的是 Semi 的**调色板本身**，不是单个语义变量 —— 这样
+   * `rgba(var(--semi-blue-0), .08)` 这类派生写法会自动跟着变。
+   */
+  --semi-blue-0: 234, 242, 255;
+  --semi-blue-1: 209, 226, 255;
+  --semi-blue-2: 163, 199, 255;
+  --semi-blue-3: 118, 169, 255;
+  --semi-blue-4: 66, 139, 255;
+  --semi-blue-5: 5, 109, 255; /* = Kumo brand，主色的那一档 */
+  --semi-blue-6: 20, 71, 230; /* = Kumo brand-hover */
+  --semi-blue-7: 16, 58, 190; /* active：比 hover 再暗一档 */
+  --semi-blue-8: 14, 46, 150;
+  --semi-blue-9: 12, 35, 112;
+
+  /* ---------- 描边 ----------
+   * Kumo 用 1px 细描边划分层次（--color-kumo-line = 10% 黑），
+   * Semi 默认 8%。对齐成 10%。
+   */
+  --semi-color-border: rgba(var(--semi-black), 0.1);
+
+  /* ---------- 圆角 ----------
+   * Kumo 是**小圆角**：xs 2px / sm 4px / md 6px / lg 8px（xl 12px 只给大容器）。
+   * Semi 默认 small 3 / medium 6 / large 12。
+   * ⚠️ 别整体调大 —— Cloudflare 的控制台是紧凑型界面，圆角一大就变味。
+   */
+  --semi-border-radius-extra-small: 2px;
+  --semi-border-radius-small: 4px;
+  --semi-border-radius-medium: 6px;
+  --semi-border-radius-large: 8px;
+}
+
+body[theme-mode='dark'] {
+  /* 暗色下 Kumo 的 brand = 品牌蓝混 10% 黑（color-mix in oklch），更沉一点。
+   * Semi 的暗色语义变量用 `rgba(var(--semi-blue-5), .2)` 派生浅色底，
+   * 所以这里同样只覆盖调色板。 */
+  --semi-blue-0: 12, 35, 112;
+  --semi-blue-1: 14, 46, 150;
+  --semi-blue-2: 16, 58, 190;
+  --semi-blue-3: 20, 71, 230;
+  --semi-blue-4: 5, 109, 255;
+  --semi-blue-5: 4, 94, 222; /* = Kumo 暗色 brand */
+  --semi-blue-6: 20, 71, 230;
+  --semi-blue-7: 16, 58, 190;
+  --semi-blue-8: 66, 139, 255;
+  --semi-blue-9: 118, 169, 255;
+}
+
+body {
+  /* 字体：Kumo 用系统栈（Semi 自己默认是 Inter，营销站也是系统栈）。
+   * 不引外链字体 —— 首屏不会因为字体请求闪一下，也不涉及字体授权。 */
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
   color: var(--semi-color-text-0);
   background-color: var(--semi-color-bg-0);
 }
@@ -997,7 +1066,45 @@ html.dark .with-pastel-balls::before {
 .semi-select,
 .semi-button,
 .semi-datepicker-range-input {
-  border-radius: 10px !important;
+  /* 原来是硬编码 10px，和 Kumo 的小圆角体系打架。
+   * 走令牌（= 6px，Kumo 的 md 档），跟随上面 body 里的圆角刻度。 */
+  border-radius: var(--semi-border-radius-medium) !important;
+}
+
+/* ==================== Kumo 表面：卡片 / 图块 ====================
+ *
+ * Cloudflare 的层次规则是**1px 细描边**，不是投影（Kumo 里 `--color-kumo-line`
+ * = 10% 黑，阴影几乎不可见）。模型广场那几张卡原来是 `rounded-2xl`(16px) +
+ * `shadow-md`，属于上一版的大圆角 + 投影风格，这里换成 Kumo 的描边表面。
+ *
+ * 用类名而不是散落的 Tailwind 工具类：本项目 tailwind.config.js 把 `theme.colors`
+ * 整个替换成了 `semi-color-*`，`border-gray-200` 这类类名其实**生成不出任何 CSS**
+ * （卡片的描边一直靠浏览器默认值撑着）。集中写在这里更可控。
+ */
+.tk-card {
+  border: 1px solid var(--semi-color-border) !important;
+  border-radius: var(--semi-border-radius-large) !important;
+  background-color: var(--semi-color-bg-1);
+  transition: border-color 150ms ease;
+}
+
+.tk-card:hover {
+  border-color: rgba(var(--semi-grey-3), 0.45) !important;
+}
+
+/* 选中态：品牌蓝描边 + 极浅蓝底（Kumo 的 info tint 做法） */
+.tk-card--selected,
+.tk-card--selected:hover {
+  border-color: var(--semi-color-primary) !important;
+  background-color: var(--semi-color-primary-light-default) !important;
+}
+
+/* 小图块（模型图标底、供应商头像底）：描边 + 小圆角，不用投影 */
+.tk-tile {
+  border: 1px solid var(--semi-color-border);
+  border-radius: var(--semi-border-radius-large);
+  background-color: var(--semi-color-bg-1);
+  box-shadow: none;
 }
 
 @keyframes slideInLeft {

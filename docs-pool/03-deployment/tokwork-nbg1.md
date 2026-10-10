@@ -608,20 +608,25 @@ gpt-image-2      模型价格 $0.009 / 次        ← 单档模型不变
 
 ```bash
 # .env
-TRUSTED_ORIGINS=https://console.tokwork.com
+TRUSTED_ORIGINS=https://console.tokwork.com,https://www.tokwork.com,https://tokwork.com
 ```
+
+营销站那两个域名是 2026-10-10 因为「营销站登录框」加进来的（见上面的 SSO 一节）——
+登录请求是从 `www.tokwork.com` 发起的，白名单里没有它，预检就过不去。
 
 > ⚠️ **踩过的坑**：光把 `TRUSTED_ORIGINS` 写进 `.env` **不生效**——
 > `ops/deploy/docker-compose.yml` 的 `environment:` 必须显式透传它，否则变量进不了容器。
 > 症状极具迷惑性：`/api/*` 预检仍返回 200（拿到的是 `*`），但浏览器因为凭证模式
 > 不接受 `*` 而静默失败。已在 compose 里补上并加了注释。
 
-实测三个 Origin 的行为（2026-10-10）：
+实测的 Origin 行为（2026-10-10，加完营销站域名后复测）：
 
 | Origin | Allow-Origin | Allow-Credentials |
 |---|---|---|
 | `https://admin.tokwork.com` | 回显该 Origin | `true` |
 | `https://console.tokwork.com` | 回显该 Origin | `true` |
+| `https://www.tokwork.com` | 回显该 Origin | `true` |
+| `https://tokwork.com` | 回显该 Origin | `true` |
 | `https://evil.example.com` | `*` | 不带 |
 
 ### 两个门户的分工
@@ -634,27 +639,130 @@ TRUSTED_ORIGINS=https://console.tokwork.com
 > 两个域名指向**同一个 Pages 项目**，界面是同一份代码 —— 差别只在登录的账号角色。
 > 所以别指望靠域名隔离权限，真正的隔离是 new-api 的角色控制。
 
-### 后续（P1/P2，还没做）
+### P1：控制台对齐 Kumo 设计系统（2026-10-10 完成）
 
-- P1：如果要和营销站视觉统一（Kumo 设计系统），改 `web/src/components/table/model-pricing/`
-  那几个组件 + 登录页即可 —— 这是**硬分支，不合并上游**，改了不产生分叉负担
-- P2：文档入口。现成有 `HeaderNavModules.docs`，指过去即可
+营销站（www）用的是 Cloudflare 的 **Kumo**；控制台（console/admin）是 Semi UI。
+两边要像同一个产品，但**没有重写组件**，走的是「把 Semi 的 CSS 变量映射到 Kumo 的语义值」。
+
+改了哪些文件：
+
+| 文件 | 改了什么 |
+|---|---|
+| `web/src/index.css` | 新增 `设计令牌：对齐 Cloudflare Kumo` 一节：品牌蓝调色板（`--semi-blue-0..9`，亮/暗两套）、圆角刻度（xs 2 / sm 4 / md 6 / lg 8）、`--semi-color-border` 8%→10%、字体换系统栈；另加 `.tk-card` / `.tk-tile` / `.tk-card--selected` 三个表面类 |
+| `web/src/index.css` | 第 986 行那段硬编码 `border-radius: 10px !important` → `var(--semi-border-radius-medium)`（6px） |
+| `web/src/components/table/model-pricing/…` | 模型广场的卡片/图标块/骨架屏/详情头：`rounded-2xl`(16px)+`shadow-md` → `tk-card`/`tk-tile`（1px 描边 + 8px 圆角，Kumo 不用投影分层次） |
+| `…/layout/header/PricingVendorIntro(.Skeleton).jsx` | 供应商介绍条从「蓝色渐变封面图 + 白字」改成中性表面（**`public/cover-4.webp` 不再被引用**） |
+| `web/src/components/auth/LoginForm.jsx`、`RegisterForm.jsx` | 登录/注册卡 `!rounded-2xl` → `tk-card`；按钮 `!rounded-full` → `!rounded-lg` |
+
+**没做的（以及为什么）**：
+
+- **没有改中性色底**。Semi 暗色 `--semi-color-bg-0` 是 `rgb(22,22,26)`，Kumo 的暗色画布接近纯黑
+  （`oklch(10%)`）。整体换底色会牵动 1000+ 行既有样式，收益只是"更像 Cloudflare"，风险不对称，**刻意保留**。
+- **没有换成 Kumo 的 React 组件**。控制台是 Semi 生态（Form/Table/Modal 深度绑定），换组件库等于重写。
+
+### P2：文档入口（2026-10-10 完成）
+
+客户在控制台点顶栏「文档」，落到**我们自己的文档**：
+
+```
+general_setting.docs_link = https://www.tokwork.com/docs
+```
+
+落库方式（管理员令牌，`/api/option/` 的通用写接口）：
+
+```bash
+TOKEN=$(cat /root/newapi-admin-token.txt)
+curl -X PUT http://127.0.0.1:3000/api/option/ \
+  -H "Authorization: Bearer $TOKEN" -H "New-API-User: 1" \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"general_setting.docs_link","value":"https://www.tokwork.com/docs"}'
+# 核实：curl -s https://api.tokwork.com/api/status | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["docs_link"])'
+```
+
+> 原来的默认值是上游的 `https://docs.newapi.pro` —— 那个站讲的是 new-api 本身，
+> 不是我们的服务条款、模型和价格，对客户没有用。
+
+### 客户从营销站登录进控制台（SSO 交接，2026-10-10 完成）
+
+**用户的诉求**：营销站上有个登录框，登完直接进控制台，不要再登一次。
+
+实现的链路（每一环都实测过）：
+
+```
+www.tokwork.com/login
+  → 浏览器直接 POST https://api.tokwork.com/api/user/login （credentials:'include'）
+     后端下发 session cookie，host-only 落在 api.tokwork.com
+     ✅ 跨域但不跨站（同为 tokwork.com），SameSite=Strict 不会拦
+  → 跳 https://console.tokwork.com/console?sso_user=<id>
+  → 控制台 index.html 的引导脚本在**任何 module 之前**把 {id} 写进 localStorage，
+     然后用 history.replaceState 抹掉地址栏参数
+  → 控制台按正常流程请求 /api/user/self，直接就是登录态
+```
+
+**为什么必须带 `sso_user`**：控制台把用户 id 存在自己域下的 localStorage，
+每个请求都带 `New-API-User` 头，后端要求它和 session 里的用户一致
+（`middleware/auth.go` 的 `authHelper`，缺头/不匹配一律 401）。
+营销站跨域写不了 console 域的 localStorage，所以只能用 URL 传一次；同时
+`getUserIdFromLocalStorage()` 是在 axios 实例**创建时**求值的，写晚了就是
+`New-API-User: -1` → 401 →「登录成功、跳过去又被踢回登录页」。所以写在 `index.html` 里。
+
+**要同时满足的三件事**（少一件都会失败，且症状都很像）：
+
+1. 后端 CORS 白名单要有营销站的两个域名（见下面 §"客户域名的两个必备配置"）；
+2. 营销站的 CSP `connect-src` 要放行 `https://api.tokwork.com`
+   （漏了会报 `Refused to connect`，页面上只显示"连不上网关"）；
+3. 控制台 `index.html` 的引导脚本要在 bundle 之前跑。
+
+### 一条只有跨域才会遇到的坑：尾斜杠 301 会丢 CORS 头
+
+gin 对没注册的路径做 301 去斜杠重定向，而**重定向发生在中间件链之前**，
+响应里没有 `Access-Control-Allow-Origin`。同源部署感觉不到，跨域部署则一律失败。
+
+实测过（2026-10-10）三条路径会 301：
+
+```
+/api/data/self/   → 客户「数据看板」
+/api/log/self/    → 客户「使用日志」
+/api/mj/self/     → midjourney 日志（本部署已关掉该模块）
+```
+
+**处置**：前端改成不带尾斜杠（`useDashboardData.js`、`useUsageLogsData.jsx`、
+`useMjLogsData.js`），后端同时注册带尾斜杠的**别名**兜住还没刷新到新包的浏览器
+（`router/api-router.go`，三处，带注释）。
+
+> 顺带修掉同一个症状的白屏根因：`loadQuotaData()` 原来只有 `finally` 没有 `catch`，
+> 请求失败就是 unhandled rejection，看板直接白屏。现在失败返回空数组，页面显示「无数据」。
+
+**验收**：
+
+```bash
+for p in "/api/data/self/" "/api/log/self/" "/api/mj/self/"; do
+  printf "%-20s " "$p"
+  curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: https://console.tokwork.com" \
+    "https://api.tokwork.com$p"
+done
+# 必须都是 401（走到了鉴权中间件），不能是 301
+```
 
 ---
 
 ## 9. 还没做（计划，不是现状）
 
 - [ ] 确认管理员密码足够强（初始化时自设，系统无默认账号）；删除默认令牌
-- [ ] **把 Pages 项目从 `372be715…` 迁到 `28fa4860…`**（同账号后 Access 才配得动）
 - [ ] 配 Cloudflare Access 保护 `admin.tokwork.com`
 - [ ] 决定是否把 `/api/*` 从 `api.tokwork.com` 上摘掉（Caddy 加路径规则）
 - [ ] `CRYPTO_SECRET` 另存到密码管理器（**丢了所有上游 Key 解码失败**）
+- [ ] 接文本模型渠道。**当前只接了 1 个渠道（apimaster 文生图），在售 10 个图片模型**；
+      `GET /v1/chat/completions` 用任何文本模型都会返回 `503 model_not_found`
+      （2026-10-10 实测，见 README 的「当前在售」一节）
 
 > 已完成（2026-10-10）：Hetzner 付费磁盘备份已开；rclone → R2 异地备份已配并实测通过。
 > 已完成（2026-10-10）：宣传站 apex 已从死掉的 `47.245.87.159` 切到 Worker
 > `tokwork-homepage`（先删掉 apex 的 A 记录，再加 Worker 自定义域 ——
 > Cloudflare 不允许自定义域与已有 DNS 记录冲突，会报
 > `Hostname ... already has externally managed DNS records`）。
+> 已完成：Pages 项目 `tokwork-panel` 已在 tokwork zone 所在账号
+> `28fa4860…` 上（admin / console 两个域名都指向它，2026-10-10 实测可服务）。
 
 ## 10. 排错速查
 
@@ -665,6 +773,9 @@ TRUSTED_ORIGINS=https://console.tokwork.com
 | Caddy 报 `challenge failed` | 80 端口不通，或 DNS 还没指向本机 |
 | 面板能打开但接口全 401 | 正常——需要先登录；`/v1/*` 要带 `Authorization: Bearer sk-...` |
 | 面板打开但控制台报 `No 'Access-Control-Allow-Origin' header` | `/api/*` 缺 CORS。见 §3，确认 `SetApiRouter` 里有 `apiRouter.Use(middleware.CORS())`，改完必须重新编译后端二进制并重新部署 |
+| 跨域下某个接口报 `No 'Access-Control-Allow-Origin'`，但 curl 直接请求是 200/401 | 大概率是**尾斜杠 301**：重定向响应不带 CORS 头。用户实测过 `/api/data/self/`、`/api/log/self/`、`/api/mj/self/`。见 §8.6「一条只有跨域才会遇到的坑」 |
+| 营销站登录框点了报「Could not reach the gateway」 | 那是营销站 CSP 拦的（`connect-src` 缺 `https://api.tokwork.com`），不是网关故障。浏览器控制台会明说 `violates the Content Security Policy` |
+| 营销站登录成功、跳到 console 又被踢回 `/login?expired=true` | `?sso_user=<id>` 没传过去，或控制台 `index.html` 的引导脚本没跑 —— 控制台会带 `New-API-User: -1` 请求，后端按「用户不匹配」401。见 §8.6 的 SSO 一节 |
 | 改动生效了但浏览器仍旧报错 | 先硬刷 `Cmd+Shift+R`；CORS 失败会被浏览器短暂记忆，无痕窗口可快速判定 |
 | 号池总览 500 / panic `pool.go:70` | 该模块残留 SQLite 写法。见 changelog v0.5.5：`top_ups` 的列名是 `create_time`（不是 `created_time`），`group`/`key` 必须按方言引用（PG 双引号） |
 | 号池配方列表重复（19 条变 57 条） | 同一根因的连带伤：查询报错被当成"不存在"→ 反复 Insert。v0.5.5 起启动会自愈去重 |

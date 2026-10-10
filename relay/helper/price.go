@@ -66,36 +66,38 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
-// requestImageSize 从请求体里读图片生成的 size（如 "1024x1024" / "auto"）。
+// requestImageParams 从请求体里读图片生成的 size（如 "1024x1024" / "auto"）
+// 和 quality（"low" / "medium" / "high"，可空）。
 //
 // 用 common.GetRequestBody 取，它会 seek 到 0 并返回可复用的 BodyStorage，
 // 读完自己 seek 回 0，不影响后续的转发读取。读不到就返回空串，
 // 调用方会退回模型的固定价。
-func requestImageSize(c *gin.Context) string {
+func requestImageParams(c *gin.Context) (size string, quality string) {
 	seeker, err := common.GetRequestBody(c)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-		return ""
+		return "", ""
 	}
 	reader, ok := seeker.(io.Reader)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	body, err := io.ReadAll(reader)
 	// 复位，后面还要把请求体转发给上游
 	_, _ = seeker.Seek(0, io.SeekStart)
 	if err != nil || len(body) == 0 {
-		return ""
+		return "", ""
 	}
 	var payload struct {
-		Size string `json:"size"`
+		Size    string `json:"size"`
+		Quality string `json:"quality"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
+		return "", ""
 	}
-	return payload.Size
+	return payload.Size, payload.Quality
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
@@ -105,14 +107,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// （如 apimaster 的 gpt-image-2：1K $0.0075 / 4K $0.030），
 	// 只按单一固定价收会在尺寸不一致时亏钱。这里用请求里的 size 覆盖固定价。
 	if sizePrices, ok := ratio_setting.GetImageSizePrice(info.OriginModelName); ok {
-		if size := requestImageSize(c); size != "" {
-			if p, variant, matched := ratio_setting.MatchImageSizeVariant(size, sizePrices); matched {
+		if size, quality := requestImageParams(c); size != "" {
+			if p, variant, matched := ratio_setting.MatchImageSizeVariant(size, quality, sizePrices); matched {
 				modelPrice = p
 				usePrice = true
 				if common.DebugEnabled {
 					println(fmt.Sprintf(
-						"image size pricing: model=%s size=%s variant=%s price=%f",
-						info.OriginModelName, size, variant, p))
+						"image size pricing: model=%s size=%s quality=%s variant=%s price=%f",
+						info.OriginModelName, size, quality, variant, p))
 				}
 			}
 		}

@@ -95,7 +95,7 @@ const PricingTable = ({
 
   const ModelTable = useMemo(
     () => (
-      <Card className='!rounded-xl overflow-hidden' bordered={false}>
+      <Card className='tk-card overflow-hidden'>
         <Table
           columns={processedColumns}
           dataSource={filteredModels}

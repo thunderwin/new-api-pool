@@ -21,15 +21,10 @@ import React, { memo } from 'react';
 import { Card, Skeleton } from '@douyinfe/semi-ui';
 
 const THEME_COLORS = {
-  allVendors: {
-    primary: '37 99 235',
-    background: 'rgba(59, 130, 246, 0.1)',
-    border: 'rgba(59, 130, 246, 0.2)',
-  },
-  specific: {
-    primary: '16 185 129',
-    background: 'rgba(16, 185, 129, 0.1)',
-    border: 'rgba(16, 185, 129, 0.2)',
+  // 头像占位块：跟 PricingVendorIntro 的 Kumo info tint 保持一致
+  avatar: {
+    background: 'rgba(var(--semi-blue-5), 0.12)',
+    border: 'rgba(var(--semi-blue-5), 0.2)',
   },
   neutral: {
     background: 'rgba(156, 163, 175, 0.1)',
@@ -47,38 +42,23 @@ const SIZES = {
 };
 
 const SKELETON_STYLES = {
-  cover: (primaryColor) => ({
-    '--palette-primary-darkerChannel': primaryColor,
-    backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-  }),
+  // 骨架块改成 Kumo 的中性填充（原来是压在蓝色封面图上的白块）
   title: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 8,
-    backdropFilter: 'blur(4px)',
+    backgroundColor: 'var(--semi-color-fill-0)',
+    borderRadius: 6,
   },
   tag: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'var(--semi-color-fill-0)',
     borderRadius: 9999,
-    backdropFilter: 'blur(4px)',
-    border: '1px solid rgba(255,255,255,0.3)',
   },
   description: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'var(--semi-color-fill-0)',
     borderRadius: 4,
-    backdropFilter: 'blur(4px)',
   },
-  avatar: (isAllVendors) => {
-    const colors = isAllVendors
-      ? THEME_COLORS.allVendors
-      : THEME_COLORS.specific;
-    return {
-      backgroundColor: colors.background,
-      borderRadius: 12,
-      border: `1px solid ${colors.border}`,
-    };
+  avatar: {
+    backgroundColor: THEME_COLORS.avatar.background,
+    borderRadius: 8,
+    border: `1px solid ${THEME_COLORS.avatar.border}`,
   },
   searchInput: {
     backgroundColor: THEME_COLORS.neutral.background,
@@ -99,74 +79,61 @@ const createSkeletonRect = (style = {}, key = null) => (
 const PricingVendorIntroSkeleton = memo(
   ({ isAllVendors = false, isMobile = false }) => {
     const placeholder = (
-      <Card
-        className='!rounded-2xl shadow-sm border-0'
-        cover={
-          <div
-            className='relative h-full'
-            style={SKELETON_STYLES.cover(
-              isAllVendors
-                ? THEME_COLORS.allVendors.primary
-                : THEME_COLORS.specific.primary,
-            )}
-          >
-            <div className='relative z-10 h-full flex items-center justify-between p-4'>
-              <div className='flex-1 min-w-0 mr-4'>
-                <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
-                  {createSkeletonRect(
-                    {
-                      ...SKELETON_STYLES.title,
-                      width: isAllVendors
-                        ? SIZES.title.width.all
-                        : SIZES.title.width.specific,
-                      height: SIZES.title.height,
-                    },
-                    'title',
-                  )}
-                  {createSkeletonRect(
-                    {
-                      ...SKELETON_STYLES.tag,
-                      width: SIZES.tag.width,
-                      height: SIZES.tag.height,
-                    },
-                    'tag',
-                  )}
-                </div>
-                <div className='space-y-2'>
-                  {createSkeletonRect(
-                    {
-                      ...SKELETON_STYLES.description,
-                      width: '100%',
-                      height: SIZES.description.height,
-                    },
-                    'desc1',
-                  )}
-                  {createSkeletonRect(
-                    {
-                      ...SKELETON_STYLES.description,
-                      backgroundColor: 'rgba(255, 255, 255, 0.15)',
-                      width: '75%',
-                      height: SIZES.description.height,
-                    },
-                    'desc2',
-                  )}
-                </div>
-              </div>
-
-              <div className='flex-shrink-0 w-16 h-16 rounded-2xl bg-white/90 shadow-md backdrop-blur-sm flex items-center justify-center'>
-                {createSkeletonRect(
-                  {
-                    ...SKELETON_STYLES.avatar(isAllVendors),
-                    width: SIZES.avatar.width,
-                    height: SIZES.avatar.height,
-                  },
-                  'avatar',
-                )}
-              </div>
+      <Card className='tk-card'>
+        <div className='flex items-center justify-between gap-4 mb-4'>
+          <div className='flex-1 min-w-0'>
+            <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
+              {createSkeletonRect(
+                {
+                  ...SKELETON_STYLES.title,
+                  width: isAllVendors
+                    ? SIZES.title.width.all
+                    : SIZES.title.width.specific,
+                  height: SIZES.title.height,
+                },
+                'title',
+              )}
+              {createSkeletonRect(
+                {
+                  ...SKELETON_STYLES.tag,
+                  width: SIZES.tag.width,
+                  height: SIZES.tag.height,
+                },
+                'tag',
+              )}
+            </div>
+            <div className='space-y-2'>
+              {createSkeletonRect(
+                {
+                  ...SKELETON_STYLES.description,
+                  width: '100%',
+                  height: SIZES.description.height,
+                },
+                'desc1',
+              )}
+              {createSkeletonRect(
+                {
+                  ...SKELETON_STYLES.description,
+                  width: '75%',
+                  height: SIZES.description.height,
+                },
+                'desc2',
+              )}
             </div>
           </div>
-        }
-      >
+
+          <div className='flex-shrink-0 tk-tile w-16 h-16 flex items-center justify-center'>
+            {createSkeletonRect(
+              {
+                ...SKELETON_STYLES.avatar,
+                width: SIZES.avatar.width,
+                height: SIZES.avatar.height,
+              },
+              'avatar',
+            )}
+          </div>
+        </div>
+
         <div className='flex items-center gap-2 w-full'>
           <div className='flex-1'>
             {createSkeletonRect(

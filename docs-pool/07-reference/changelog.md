@@ -13,6 +13,47 @@
 
 ---
 
+## v0.5.6 — 控制台 Kumo 化 + 营销站 SSO + 尾斜杠 CORS 修复（2026-10-10）
+
+| 类型 | 变更 |
+|---|---|
+| `*` | `web/src/index.css`：新增 Kumo 对齐的设计令牌（品牌蓝 `--semi-blue-0..9` 亮/暗两套、圆角 xs2/sm4/md6/lg8、`--semi-color-border` 10%、系统字体栈），硬编码的 `border-radius: 10px` 改走令牌 |
+| `+` | `web/src/index.css`：`.tk-card` / `.tk-tile` / `.tk-card--selected` —— Kumo 的「1px 描边 + 小圆角」表面，替代 `rounded-2xl` + 投影 |
+| `*` | `web/src/components/table/model-pricing/**`、`components/auth/{LoginForm,RegisterForm}.jsx`：模型广场卡片/图标块/骨架屏/登录注册卡换到上述表面类 |
+| `*` | `PricingVendorIntro(.Skeleton).jsx`：供应商介绍条去掉蓝色渐变封面图，改中性表面（`public/cover-4.webp` 不再被引用） |
+| `*` | `web/index.html`：新增 SSO 引导脚本 —— 从 `?sso_user=<id>` 恢复 localStorage 里的用户 id（axios 的 `New-API-User` 头依赖它），随后抹掉参数 |
+| `🐛` | `router/api-router.go`：为 `/api/log/self/`、`/api/data/self/`、`/api/mj/self/` 注册尾斜杠别名（gin 的 301 丢 CORS 头 → 跨域白屏）<br>前端同步去掉这三处的尾斜杠（`useDashboardData.js` / `useUsageLogsData.jsx` / `useMjLogsData.js`） |
+| `🐛` | `useDashboardData.js` 的 `loadQuotaData()` 补 `catch`：请求失败返回空数组，不再 unhandled rejection + 白屏 |
+| `🐛` | `setting/ratio_setting/image_size_price.go`：`MatchImageSizeVariant` 支持「档位 + 质量」的价表（`1K low` / `1K medium`）与请求里的 `quality` 字段；`relay/helper/price.go` 一并读 `quality` |
+| `+` | `setting/ratio_setting/image_size_price_test.go`：覆盖标准档位、质量档、非标准档位名三种价表形状 |
+
+### 为什么要改图片尺寸计价（`MatchImageSizeVariant`）
+
+上游 apimaster 的价表并不都是 `1K/2K/4K` 这种干净形状，实际见过的还有
+`1K low` / `1K medium`（grok-imagine-image-2.0）、`fast/relax/turbo`（midjourney）、
+`480P/720P`（视频模型）。
+
+旧逻辑只认标准档位名，其它一律落到 `pickCheapest()`（**全局最低价**）——
+也就是说 `grok-imagine-image-2.0` 无论出多大的图都只收 `$0.012`，
+而 2K medium 的上游成本是 `$0.096`。**按次亏钱**。
+
+现在按「精确档位名 → 档位名 + 请求里的 quality → 该档位下最低价」三级匹配；
+请求没带 quality 时取该档最低价（宁可少赚，不要事后跟客户争）。
+回到 `grok` 的例子：1K 最低 `$0.048`（原来 `$0.012`），2K 最低 `$0.072`。
+
+> 还没解决：请求带 `quality: high` 而价表只有 `low/medium` 时会退回该档最低价；
+> `fast/relax/turbo`、`480P/720P` 这类"档位名跟尺寸无关"的模型仍会退化成全局最低价。
+> 这些模型目前都没接渠道（没卖），接之前要再补一轮。
+
+### 影响面
+
+- 控制台（admin / console）界面外观变化：圆角变小、描边变细、字体换系统栈。
+- 客户可以从营销站登录框直接进控制台（`TRUSTED_ORIGINS` 增加两个营销站域名）。
+- 客户端的「数据看板 / 使用日志」从白屏恢复。
+- 图片模型（尤其 grok）的按次计费口径变化。
+
+---
+
 ## v0.5.5 — 号池模块的 Postgres 兼容 + 配方重复自愈（2026-10-10）
 
 | 类型 | 变更 |

@@ -87,12 +87,23 @@ func GetImageSizePriceCopy() map[string]map[string]float64 {
 }
 
 // MatchImageSizeVariant 按请求里的 size（"1024x1024" / "2048x2048" / "auto"）
-// 在给定价表里选一档价格。
+// 和 quality（"low" / "medium" / "high"，可空）在给定价表里选一档价格。
 //
 //   - size 空或 "auto" → 用价表里最低档（上游 auto 通常按 1K 出图）
 //   - 解析不出来       → 用最低档，并返回 matched=false 供调用方决定是否兜底
 //   - 算出的档位不在价表里 → 向下找最接近的可用档；都没有则返回 false
-func MatchImageSizeVariant(size string, prices map[string]float64) (float64, string, bool) {
+//
+// 上游的价表并不只有「1K / 2K / 4K」这一种形状，还见过：
+//
+//	"1K low" / "1K medium"（grok-imagine-image-2.0，同尺寸按质量分档）
+//	"fast" / "relax" / "turbo"（midjourney，按速度分档）
+//	"480P" / "720P" / "1080P"（视频模型，按分辨率分档）
+//
+// 所以命中档位时按「精确名 → 档位名 + 质量 → 档位名开头的任意键（取其中最低价）」
+// 三级去找。最后一级是有意取**低价**：请求里没带质量时我们无从知道上游会按哪一档出图，
+// 与其按最高档向客户多收，不如按最低档收（宁可少赚，不要事后争议）。
+// 非标准档位名（midjourney / 视频模型那种）目前只能退化成全局最低价。
+func MatchImageSizeVariant(size, quality string, prices map[string]float64) (float64, string, bool) {
 	if len(prices) == 0 {
 		return 0, "", false
 	}
@@ -111,6 +122,36 @@ func MatchImageSizeVariant(size string, prices map[string]float64) (float64, str
 				if !found || p < best {
 					best, bestName, found = p, n, true
 				}
+			}
+		}
+		return best, bestName, found
+	}
+
+	// 在某个档位名下面找价：精确 → 档位名 + 质量 → 档位名开头的键里挑最低
+	pickInVariant := func(variant string) (float64, string, bool) {
+		if p, ok := prices[variant]; ok {
+			return p, variant, true
+		}
+		q := strings.ToLower(strings.TrimSpace(quality))
+		if q != "" {
+			for _, sep := range []string{" ", "-", "_"} {
+				name := variant + sep + q
+				for k, p := range prices {
+					if strings.EqualFold(k, name) {
+						return p, k, true
+					}
+				}
+			}
+		}
+		prefix := strings.ToLower(variant) + " "
+		best, bestName := 0.0, ""
+		found := false
+		for k, p := range prices {
+			if !strings.HasPrefix(strings.ToLower(k), prefix) {
+				continue
+			}
+			if !found || p < best {
+				best, bestName, found = p, k, true
 			}
 		}
 		return best, bestName, found
@@ -144,8 +185,8 @@ func MatchImageSizeVariant(size string, prices map[string]float64) (float64, str
 		}
 	}
 	for i := idx; i >= 0; i-- {
-		if p, ok := prices[imageSizeVariants[i].Name]; ok {
-			return p, imageSizeVariants[i].Name, true
+		if p, name, ok := pickInVariant(imageSizeVariants[i].Name); ok {
+			return p, name, true
 		}
 	}
 	return pickCheapest()

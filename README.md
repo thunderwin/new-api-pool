@@ -32,6 +32,28 @@
 详细部署记录（含资源预算、构建链路、踩坑、排错速查）：
 [`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md)
 
+### 对客户暴露的入口（2026-10-10 核实）
+
+| 用途 | 地址 | 谁托管 |
+|---|---|---|
+| 宣传站 + **登录框** | `https://www.tokwork.com/login` | Worker `tokwork-homepage` |
+| 文档 | `https://www.tokwork.com/docs` | 同上 |
+| 价格（实时，读 `/api/pricing`） | `https://www.tokwork.com/pricing` | 同上 |
+| **客户控制台** | `https://console.tokwork.com` | Pages `tokwork-panel` |
+| 管理面板（只有自己用） | `https://admin.tokwork.com` | 同一个 Pages 项目 |
+| API | `https://api.tokwork.com/v1` | Hetzner（灰云直连） |
+
+营销站的登录框登完直接进 console，不用二次登录 —— 机制见
+[`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md) §8.6 的 SSO 一节。
+
+### 当前在售（2026-10-10 核实）
+
+- **1 个渠道**：apimaster 文生图；**在售 10 个图片模型**，`GET /v1/models` 是唯一权威列表。
+- **文本/对话模型还没接**：`POST /v1/chat/completions` 现在返回 `503 model_not_found`（实测）。
+- 定价由 `sync-upstream-pricing.py` 每日 04:00 按上游**最低价 ×1.25** 自动同步；
+  图片模型另有按输出规格的价表（`ImageSizePrice`）。
+- 控制台报价页与后台 admin 页是**同一份 SPA**，差别只在登录账号的角色。
+
 ### Cloudflare 账号（**别搞错**）
 
 本项目所有 Cloudflare 资源（tokwork.com 的 zone、Pages 项目、R2 桶、Worker）

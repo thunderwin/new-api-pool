@@ -31,17 +31,17 @@ const PricingCardSkeleton = ({
         {Array.from({ length: skeletonCount }).map((_, index) => (
           <Card
             key={index}
-            className='!rounded-2xl border border-gray-200'
+            className='tk-card'
             bodyStyle={{ padding: '24px' }}
           >
             {/* 头部：图标 + 模型名称 + 操作按钮 */}
             <div className='flex items-start justify-between mb-3'>
               <div className='flex items-start space-x-3 flex-1 min-w-0'>
                 {/* 模型图标骨架 */}
-                <div className='w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-sm'>
+                <div className='tk-tile w-12 h-12 flex items-center justify-center relative'>
                   <Skeleton.Avatar
                     size='large'
-                    style={{ width: 48, height: 48, borderRadius: 16 }}
+                    style={{ width: 48, height: 48, borderRadius: 8 }}
                   />
                 </div>
                 {/* 模型名称和价格区域 */}

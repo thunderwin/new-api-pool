@@ -39,26 +39,29 @@ const CONFIG = {
 
 const THEME_COLORS = {
   allVendors: {
-    primary: '37 99 235',
-    background: 'rgba(59, 130, 246, 0.08)',
+    background: 'rgba(var(--semi-blue-5), 0.12)',
   },
   specific: {
-    primary: '16 185 129',
-    background: 'rgba(16, 185, 129, 0.1)',
+    background: 'rgba(var(--semi-blue-5), 0.12)',
   },
 };
 
+/**
+ * 供应商介绍条原来是一张「蓝色渐变封面图 + 白字」的大 banner（上一版视觉）。
+ * Cloudflare 的界面不用这种彩色 hero，改成 Kumo 的中性表面：卡片描边 +
+ * 正常文字色 + 细描边标签。相应地 `titleText` / `descriptionText` 不再需要
+ * 覆写成白色 —— 留空即继承 Semi 的 `--semi-color-text-*`。
+ */
 const COMPONENT_STYLES = {
   tag: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    color: '#1f2937',
-    border: '1px solid rgba(255,255,255,0.8)',
+    backgroundColor: 'var(--semi-color-fill-0)',
+    color: 'var(--semi-color-text-2)',
+    border: '1px solid var(--semi-color-border)',
     fontWeight: '500',
   },
-  avatarContainer:
-    'w-16 h-16 rounded-2xl bg-white/90 shadow-md backdrop-blur-sm flex items-center justify-center',
-  titleText: { color: 'white' },
-  descriptionText: { color: 'rgba(255,255,255,0.9)' },
+  avatarContainer: 'tk-tile w-16 h-16 flex items-center justify-center',
+  titleText: {},
+  descriptionText: { color: 'var(--semi-color-text-2)' },
 };
 
 const CONTENT_TEXTS = {
@@ -259,17 +262,6 @@ const PricingVendorIntro = memo(
       [vendorInfo, t],
     );
 
-    const createCoverStyle = useCallback(
-      (primaryColor) => ({
-        '--palette-primary-darkerChannel': primaryColor,
-        backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-      }),
-      [],
-    );
-
     const renderSearchActions = useCallback(
       () => (
         <SearchActions
@@ -318,51 +310,42 @@ const PricingVendorIntro = memo(
     );
 
     const renderHeaderCard = useCallback(
-      ({ title, count, description, rightContent, primaryDarkerChannel }) => (
-        <Card
-          className='!rounded-2xl shadow-sm border-0'
-          cover={
-            <div
-              className='relative h-full'
-              style={createCoverStyle(primaryDarkerChannel)}
-            >
-              <div className='relative z-10 h-full flex items-center justify-between p-4'>
-                <div className='flex-1 min-w-0 mr-4'>
-                  <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
-                    <h2
-                      className='text-lg sm:text-xl font-bold truncate'
-                      style={COMPONENT_STYLES.titleText}
-                    >
-                      {title}
-                    </h2>
-                    <Tag
-                      style={COMPONENT_STYLES.tag}
-                      shape='circle'
-                      size='small'
-                      className='self-center'
-                    >
-                      {t('共 {{count}} 个模型', { count })}
-                    </Tag>
-                  </div>
-                  <Paragraph
-                    className='text-xs sm:text-sm leading-relaxed !mb-0 cursor-pointer'
-                    style={COMPONENT_STYLES.descriptionText}
-                    ellipsis={{ rows: 2 }}
-                    onClick={() => handleOpenDescModal(description)}
-                  >
-                    {description}
-                  </Paragraph>
-                </div>
-
-                <div className='flex-shrink-0'>{rightContent}</div>
+      ({ title, count, description, rightContent }) => (
+        <Card className='tk-card'>
+          <div className='flex items-center justify-between gap-4 mb-4'>
+            <div className='flex-1 min-w-0'>
+              <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
+                <h2
+                  className='text-lg sm:text-xl font-semibold truncate'
+                  style={COMPONENT_STYLES.titleText}
+                >
+                  {title}
+                </h2>
+                <Tag
+                  style={COMPONENT_STYLES.tag}
+                  shape='circle'
+                  size='small'
+                  className='self-center'
+                >
+                  {t('共 {{count}} 个模型', { count })}
+                </Tag>
               </div>
+              <Paragraph
+                className='text-xs sm:text-sm leading-relaxed !mb-0 cursor-pointer'
+                style={COMPONENT_STYLES.descriptionText}
+                ellipsis={{ rows: 2 }}
+                onClick={() => handleOpenDescModal(description)}
+              >
+                {description}
+              </Paragraph>
             </div>
-          }
-        >
+
+            <div className='flex-shrink-0'>{rightContent}</div>
+          </div>
           {renderSearchActions()}
         </Card>
       ),
-      [renderSearchActions, createCoverStyle, handleOpenDescModal, t],
+      [renderSearchActions, handleOpenDescModal, t],
     );
 
     const renderAllVendorsAvatar = useCallback(() => {
@@ -379,7 +362,6 @@ const PricingVendorIntro = memo(
         count: currentModelCount,
         description: getVendorDescription('all'),
         rightContent: renderAllVendorsAvatar(),
-        primaryDarkerChannel: THEME_COLORS.allVendors.primary,
       });
       return (
         <>
@@ -402,7 +384,6 @@ const PricingVendorIntro = memo(
       description:
         currentVendor.description || getVendorDescription(currentVendor.name),
       rightContent: renderVendorAvatar(currentVendor, t, false),
-      primaryDarkerChannel: THEME_COLORS.specific.primary,
     });
 
     return (

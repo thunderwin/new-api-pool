@@ -852,6 +852,41 @@ curl -X POST $BASE/api/pool/jobs/$JOB_ID/manual-result ...
 橙云会被 Cloudflare 的 **100 秒 HTTP 超时**掐断 LLM 长流式响应（524）。
 界面域名（静态站）反而适合橙云。
 
+### H6. 尾斜杠 301 会丢掉 CORS 头（只在跨域部署时炸）
+
+gin 对**没注册**的路径做「去尾斜杠」的 301 重定向，而重定向发生在**中间件链之前** ——
+`middleware.CORS()` 根本没机会运行，于是 301 响应里没有 `Access-Control-Allow-Origin`。
+
+- 同源部署（前端由同一个 Go 进程托管）**完全感觉不到**：浏览器照常跟随重定向。
+- 分域部署（前端在 Pages、后端在 api 域名）时，浏览器在**第一跳**就判定 CORS 失败：
+  `No 'Access-Control-Allow-Origin' header is present on the requested resource`。
+
+2026-10-10 实测中招的三条路径（前端写 URL 时手滑多了个尾斜杠）：
+`/api/data/self/`、`/api/log/self/`、`/api/mj/self/`，对应客户端的
+**数据看板**和**使用日志**两个页面——现象是"页面白屏"，控制台里才看得到真正的原因。
+
+**两条都要做**：
+
+1. 前端不要写尾斜杠（改了 `useDashboardData.js` / `useUsageLogsData.jsx` / `useMjLogsData.js`）；
+2. 后端顺手注册带尾斜杠的别名（`router/api-router.go`），兜住还没刷新到新包的浏览器。
+
+**排查套路**：跨域下任何「接口莫名失败」，先 `curl -o /dev/null -w '%{http_code}'` 看一眼是不是 301。
+
+### H7. 跨域登录要同时过三关：CORS 白名单 / CSP connect-src / New-API-User 头
+
+营销站的登录框（`www.tokwork.com`）直接 POST 网关的 `/api/user/login`，三关缺一不可，
+而且**三关失败的症状都是"登录不了"**，不看浏览器控制台根本分不清：
+
+| 关卡 | 漏了会怎样 | 浏览器控制台里的原话 |
+|---|---|---|
+| 后端 `TRUSTED_ORIGINS` 白名单 | 预检失败 | `blocked by CORS policy: ... Access-Control-Allow-Headers` |
+| 营销站 CSP `connect-src` | 请求根本没发出去 | `Refused to connect because it violates the document's Content Security Policy` |
+| 控制台 localStorage 里的用户 id | 登录成功、跳过去 401 | `GET /api/user/self 401` |
+
+前两条是配置，第三条是**架构**：`New-API-User` 头是控制台在 axios 实例创建时从
+自己域的 localStorage 读的，跨域写不进去 —— 只能用 URL 带一次 id，
+且必须在 bundle 加载前落盘（写在 `index.html` 里，见 §8.6 的 SSO）。
+
 ### 验收脚本（改完 CORS 必须跑）
 
 ```bash

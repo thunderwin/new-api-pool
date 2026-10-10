@@ -167,7 +167,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
       if (isAdminUser) {
         url = `/api/data/?username=${username}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
-        url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        // 注意：这里**不能**写成 `/api/data/self/`（带尾斜杠）。后端没为它注册路由，
+        // gin 会 301 去斜杠，而重定向响应不带 CORS 头，跨域时浏览器直接判失败，
+        // 结果就是数据看板白屏（2026-10-10 实测）。后端已补了别名兜底。
+        url = `/api/data/self?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
 
       const res = await API.get(url);
@@ -188,6 +191,11 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
         showError(message);
         return [];
       }
+    } catch (err) {
+      // 请求失败不能让整个看板塌掉：调用方拿到空数组，页面上显示「无数据」。
+      // （原来没有 catch，一次失败就是 unhandled rejection + 白屏）
+      console.error('加载用量数据失败:', err);
+      return [];
     } finally {
       setLoading(false);
     }
