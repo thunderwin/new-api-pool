@@ -332,6 +332,39 @@ UPDATE users SET setting='{"accept_unset_model_ratio_model": true}' WHERE role=1
 > 要正式对外收费，得去「分组与模型定价设置」给这些 image 模型配真实价格
 > （按次计费的图像模型走 `GetModelPrice`，见 `relay/helper/price.go` 的 `ModelPriceHelperPerCall`）。
 
+### 上游计费：能拿到什么、拿不到什么（2026-10-10 实测）
+
+apimaster 本身也是 new-api/one-api 类网关，所以带**标准计费接口**。
+
+**单次请求：只有 token，没有金额。** 文生图响应里带一个 `usage` 对象：
+
+```json
+{"input_tokens": 3, "output_tokens": 1056,
+ "output_tokens_details": {"image_tokens": 1056, "reasoning_tokens": 0, "text_tokens": 0},
+ "total_tokens": 1059}
+```
+
+（`gpt-image-2` 出 1024×1024 一张 = 1056 个 image token。）
+
+**金额：只能查累计，没有逐笔明细。**
+
+| 接口 | 返回 |
+|---|---|
+| `GET /v1/dashboard/billing/subscription` | `soft_limit_usd` / `hard_limit_usd` 均为 `100000000`（**占位值，不是真实余额**） |
+| `GET /v1/dashboard/billing/usage?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` | `{"object":"list","total_usage": ...}` |
+
+实测：生成一张 1024×1024 `gpt-image-2`，`total_usage` 增量 = **0.7876**。
+
+> ⚠️ **单位待核实**：one-api 系该接口的 `total_usage` 惯例是**美分**
+> （即 ≈ $0.0079/张），但**无法从 API 本身确认**，要以 apimaster 后台账单页为准。
+
+**对利润核算的影响**：上游只给「token 数」+「按日累计金额」，
+**拿不到逐笔成本**。逐笔要算只能调前调后各查一次取差值。
+而本系统自己的 `logs` 表是**逐笔**记录用户侧 `quota` 的 ——
+两边粒度不对等，所以「号池管理 → 利润」页目前用的是估算系数
+`PoolUpstreamCostRatio`（默认 0.6），**那是拍脑袋的值，不是真实上游账单**。
+要真实毛利，得改成按上面的接口拉日累计再对账。
+
 ### 运维用的管理员 API 令牌
 
 管理员账号（`woothunder`）原本没有访问令牌，脚本调管理接口会 `Unauthorized`。
