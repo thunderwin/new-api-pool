@@ -26,7 +26,7 @@ body.sidebar-collapsed {
 
 /* ==================== 设计令牌：对齐 Cloudflare Kumo ====================
  *
- * 控制台（console.tokwork.com / admin.tokwork.com）跑在 Semi UI 上，营销站
+ * 管理后台（admin.tokwork.com，只给 root 用）跑在 Semi UI 上，营销站
  * （www.tokwork.com）跑在 Cloudflare 的 Kumo 上。两边要看起来像同一个产品，
  * 但**不重写组件**：这里只把 Semi 的 CSS 变量映射到 Kumo 的语义值。
  *

@@ -13,6 +13,26 @@
 
 ---
 
+## v0.5.9 — admin 后台只给 root + 下线 console.tokwork.com（2026-10-20）
+
+产品决定：`admin.tokwork.com` **只给项目主人（root）用**，客户一律走营销站 `/console`；
+`console.tokwork.com` 这个旧域名不再需要，整个下线。
+
+| 类型 | 变更 |
+|---|---|
+| `🐛` | `web/src/helpers/bootstrapSession.js`（新增）+ `web/src/index.jsx`：渲染前用 cookie 调 `/api/user/whoami` 恢复身份。修掉「营销站登录 → 跳 admin → 又被踢回登录」的死循环 |
+| `🐛` | `web/src/helpers/api.js`：request 拦截器**每次请求**重算 `New-API-User` 头（原来只在 axios 实例创建时取一次） |
+| `+` | 同一个 `bootstrapSession`：**root 门禁** —— `role < 100` 的账号不渲染 SPA，直接送去 `www.tokwork.com/console`；未登录则送去营销站登录（`next` 回 admin）。账号类路径（`/login` 等）仍交给 `AuthSiteRedirect` |
+| `*` | `ops/deploy/docker-compose.yml`：`FRONTEND_BASE_URL` 从 admin 改成 `https://${SITE_DOMAIN:-www.tokwork.com}` —— `api.tokwork.com/` 这类网页路径现在 301 到营销站，不再把人引到后台；`TRUSTED_ORIGINS` 前面固定拼上 `https://${ADMIN_DOMAIN}`（它不再是 FRONTEND_BASE_URL，漏了后台就登不上） |
+| `*` | `ops/deploy/gen-env.sh`：新增 `SITE_DOMAIN`、`TRUSTED_ORIGINS` 默认值 |
+| `-` | 营销站（`homepage/`）：`worker.mjs` 删掉 console 域名 301 逻辑，`wrangler.jsonc` 删掉该自定义域 |
+
+### 影响面
+
+- 门禁只在界面层；后端权限仍按角色校验（客户本来就调不了管理接口）。
+- `console.tokwork.com` 不再解析，老链接直接失效（顺带消除了它 `/console` → `/console/console` 404 的 bug）。
+- 线上 `.env` 的 `TRUSTED_ORIGINS` 改为 `https://www.tokwork.com,https://tokwork.com`（去掉 console）。
+
 ## v0.5.8 — 注册时保留邮箱 + 客户门户改用 Kumo 组件（2026-10-10）
 
 | 类型 | 变更 |

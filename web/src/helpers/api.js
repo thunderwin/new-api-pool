@@ -83,6 +83,23 @@ function patchAPIInstance(instance) {
 
 patchAPIInstance(API);
 
+/**
+ * 每次请求都从 localStorage 重新取用户 id。
+ *
+ * 之前只在 axios.create() 时取一次，而营销站 SSO 是在 SPA 启动后才把
+ * `user` 写进 localStorage 的 —— 实例上的默认头会永远是 -1，导致
+ * `/api/user/self` 报 "New-Api-User header not provided"。
+ */
+function attachUserHeader(instance) {
+  instance.interceptors.request.use((config) => {
+    config.headers = config.headers || {};
+    config.headers['New-API-User'] = String(getUserIdFromLocalStorage());
+    return config;
+  });
+}
+
+attachUserHeader(API);
+
 export function updateAPI() {
   API = axios.create({
     baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
@@ -96,6 +113,7 @@ export function updateAPI() {
   });
 
   patchAPIInstance(API);
+  attachUserHeader(API);
 }
 
 API.interceptors.response.use(

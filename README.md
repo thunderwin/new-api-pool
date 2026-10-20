@@ -26,22 +26,23 @@
 | 后端（new-api + Postgres + Redis + Caddy） | **Hetzner Cloud**，纽伦堡 `nbg1`，`2.31.8.21` |
 | 客户 API | `https://api.tokwork.com`（灰云直连 Hetzner，避免 Cloudflare 100s 超时掐断流式响应） |
 | 管理面板（React SPA） | `https://admin.tokwork.com` → **Cloudflare Pages** 项目 `tokwork-panel` |
-| 宣传站 | `tokwork.com` + `www.tokwork.com` → Cloudflare Worker `tokwork-homepage`（同为自定义域，同源同内容） |
+| 宣传站 | `www.tokwork.com` → Cloudflare Worker `tokwork-homepage`（apex `tokwork.com` 2026-10-20 核实**没挂上、打不开**，见 tokwork-nbg1.md §4） |
 | 异地备份 | **Cloudflare R2** 桶 `tokwork-backup`（每日 `pg_dump` 自动上传） |
 
 详细部署记录（含资源预算、构建链路、踩坑、排错速查）：
 [`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md)
 
-### 对客户暴露的入口（2026-10-10 核实）
+### 对客户暴露的入口（2026-10-20 核实）
 
 | 用途 | 地址 | 谁托管 |
 |---|---|---|
 | 宣传站 + 账号入口（登录/注册/找回密码） | `https://www.tokwork.com` | Worker `tokwork-homepage` |
 | **客户门户**：概览 / API Key / 调用历史 / 账户 | `https://www.tokwork.com/console` | 同一套 Next.js 应用 |
 | 文档 / 价格 / 状态 | `https://www.tokwork.com/docs` · `/pricing` · `/status` | 同上 |
-| 旧门户域名 | `console.tokwork.com` → 301 到 `/console` | 同一个 Worker |
-| 管理面板（**只有自己用**） | `https://admin.tokwork.com` | Pages `tokwork-panel`（new-api 自带 SPA） |
-| API | `https://api.tokwork.com/v1` | Hetzner（灰云直连） |
+| 管理面板（**只给 root 用**，非 root 账号会被送回 `www.tokwork.com/console`） | `https://admin.tokwork.com` | Pages `tokwork-panel`（new-api 自带 SPA） |
+| API | `https://api.tokwork.com/v1`（网页路径 301 到 www，不到 admin） | Hetzner（灰云直连） |
+
+> `console.tokwork.com` 已于 2026-10-20 **整个下线**（Worker 自定义域与 DNS 都删了），不再做 301。
 
 **客户看的一切都是我们自己写的**（2026-10-10 定的方向）：门户是营销站这套 Next.js
 应用里的 `/console/**`，不再用 new-api 自带的界面。机制与取舍见

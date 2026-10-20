@@ -104,19 +104,22 @@ curl -s -D - -o /dev/null -H "Origin: https://admin.tokwork.com" \
 前端构建时必须注入 `VITE_REACT_APP_SERVER_URL=https://api.tokwork.com`，
 否则 axios 的 baseURL 会退化成相对路径（见 `web/src/helpers/api.js`）。
 
-**`api.tokwork.com` 只做 API，不带界面**（2026-10-10 变更）：
+**`api.tokwork.com` 只做 API，不带界面**（2026-10-10 变更，2026-10-20 改跳转目标）：
 
 Go 二进制里 `//go:embed web/dist` 仍然嵌着整套前端，但后端设了
-`FRONTEND_BASE_URL=https://admin.tokwork.com` 之后就不再兜底服务它了：
+`FRONTEND_BASE_URL` 之后就不再兜底服务它了。2026-10-20 起这个变量指向**营销站**
+`https://www.tokwork.com`（原来是 admin）—— admin 后台只给 root 用，不能把路过的客户引过去：
 
 | 请求 | 行为 |
 |---|---|
-| `https://api.tokwork.com/` `/login` `/console` … | `301` → `https://admin.tokwork.com/<同路径>` |
+| `https://api.tokwork.com/` `/login` `/console` … | `301` → `https://www.tokwork.com/<同路径>` |
 | `https://api.tokwork.com/api/*`、`/v1/*` | 原样返回，**不跳转** |
 | 未注册的 `/api/*`、`/v1/*` | JSON `404`（不会把 API 客户端引到 HTML 站点） |
 
-> 已核实 2026-10-10 线上实测。改动见
-> [`../07-reference/changelog.md`](../07-reference/changelog.md) v0.5.2。
+> 已核实 2026-10-20 线上实测（`/` → `www.tokwork.com/`，`/console` → `www.tokwork.com/console`）。
+> 改动见 [`../07-reference/changelog.md`](../07-reference/changelog.md) v0.5.2、v0.5.9。
+> 因为 admin 不再是 `FRONTEND_BASE_URL`，`ops/deploy/docker-compose.yml` 把
+> `https://${ADMIN_DOMAIN}` 固定拼在 `TRUSTED_ORIGINS` 前面，保证后台仍能带 cookie 跨域。
 
 **`api.tokwork.com` 必须是灰云（仅 DNS）**：橙云会被 Cloudflare 的 100 秒
 HTTP 超时掐断 LLM 长流式响应（524）。
@@ -127,9 +130,17 @@ HTTP 超时掐断 LLM 长流式响应（524）。
 
 | 域名 | 类型 | 目标 | 代理 | 用途 |
 |---|---|---|---|---|
-| `api.tokwork.com` | A | `2.31.8.21` | **仅 DNS（灰云）** | **只做 API**：客户调 `/v1/*`，面板跨域调 `/api/*`；网页路径 301 跳 admin |
-| `admin.tokwork.com` | CNAME | `tokwork-admin.pages.dev` | **仅 DNS（灰云）** | 后台面板（Cloudflare Pages）——唯一的界面入口 |
-| `tokwork.com` + `www.tokwork.com` | Worker 自定义域 | Worker `tokwork-homepage` | 橙云 | 宣传站（两条都是自定义域，同源同内容） |
+| `api.tokwork.com` | A | `2.31.8.21` | **仅 DNS（灰云）** | **只做 API**：客户调 `/v1/*`，门户/后台跨域调 `/api/*`；网页路径 301 跳 www |
+| `admin.tokwork.com` | CNAME | `tokwork-panel.pages.dev` | **仅 DNS（灰云）** | 管理后台（Cloudflare Pages）——**只给 root 用**，见 §8.6.9 |
+| `www.tokwork.com` | Worker 自定义域 | Worker `tokwork-homepage` | 橙云 | 宣传站 + 客户门户 `/console` |
+| ~~`console.tokwork.com`~~ | — | — | — | **2026-10-20 已下线**：Worker 自定义域与 DNS 记录都已删除，不再解析 |
+
+> ⚠️ apex `tokwork.com` **目前没挂到 Worker 上，也打不开**（已核实 2026-10-20）：
+> Worker 自定义域只有 `www.tokwork.com`；在权威 NS `matt.ns.cloudflare.com` 上查
+> `tokwork.com A` 返回为空；`curl https://tokwork.com/` TLS 握手失败。
+> 历史上 `wrangler.jsonc` 里从来没有过 apex 这条路由（见 `homepage/AGENTS.md`「域名状态」）。
+> 本文其它地方写过「apex 已切到 Worker」，那是错的。要挂上：在 `routes` 里补
+> `{ "pattern": "tokwork.com", "custom_domain": true }` 再部署（还没做）。
 
 `tokwork.com` 这个 zone 在**另一个 Cloudflare 账号**里，与本项目使用的
 `Info@yijianspace.com's Account`（Pages 项目所在账号）不同。
@@ -191,8 +202,8 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 ```
 
 > 注意 `main.go` 里有 `//go:embed web/dist`，所以**编译后端之前必须先构建前端**，
-> 否则 `go build` 会失败。二进制里嵌的这套 SPA 仍然可用作兜底面板
-> （`https://api.tokwork.com/` 返回 200）。
+> 否则 `go build` 会失败。线上设了 `FRONTEND_BASE_URL`，二进制里嵌的这套 SPA
+> 不会被服务（`https://api.tokwork.com/` 是 301，见 §3）。
 
 ## 6. 容器与资源预算
 
@@ -281,6 +292,9 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
+>
+> 第二个上游候选（Grsai，图片/视频为主）的调研见
+> [`07-reference/upstream-grsai.md`](../07-reference/upstream-grsai.md) —— **只调研，未接入**。
 
 ### 上游
 
@@ -593,7 +607,7 @@ curl -X POST http://127.0.0.1:3000/api/channel/ \
 | 1 | `/api/pricing` 暴露 `image_size_price`（`model/pricing.go` 的 `Pricing` 结构 + `updatePricing`） | 代码 |
 | 2 | 价格页显示**起价 + 按规格明细**（`web/src/helpers/utils.jsx` 的 `getModelPriceItems`） | 代码 |
 | 3 | 侧边栏瘦身：关掉客户用不到的 `console.midjourney`（其余保留） | 配置 |
-| 4 | 客户域名 `console.tokwork.com` → 同一个 Pages 项目 `tokwork-panel` | 基建 |
+| 4 | 客户域名 `console.tokwork.com` → 同一个 Pages 项目 `tokwork-panel`（后来改挂 Worker 做 301，2026-10-20 整个下线） | 基建 |
 
 **为什么要做 1 和 2**：上游对同一模型的不同尺寸收费不同（`gpt-image-2-fd`
 1K $0.0234 / 4K $0.0563，差 2.4 倍）。价格页只显示兜底固定价的话，客户按 1K 下单、
@@ -606,6 +620,10 @@ gpt-image-2      模型价格 $0.009 / 次        ← 单档模型不变
 ```
 
 ### 客户域名的两个必备配置
+
+> ⚠️ **历史记录**：`console.tokwork.com` 已于 2026-10-20 整个下线，下面的 DNS 配置已不存在。
+> 现在的 `.env` 是 `TRUSTED_ORIGINS=https://www.tokwork.com,https://tokwork.com`，
+> compose 再固定拼上 `https://admin.tokwork.com`；CORS 现状见 §8.6.9「现在的 CORS 白名单」。
 
 1. **DNS**：`console` CNAME → `tokwork-panel.pages.dev`，**仅 DNS（灰云）**
    —— 和 `admin` 一致。Pages 自定义域在**同账号**下才能激活（这次带了 `zone_tag`）。
@@ -636,6 +654,9 @@ TRUSTED_ORIGINS=https://console.tokwork.com,https://www.tokwork.com,https://tokw
 | `https://evil.example.com` | `*` | 不带 |
 
 ### 两个门户的分工
+
+> ⚠️ **历史记录，已作废**：客户门户 2026-10-10 搬去了营销站 `/console`（§8.6.9），
+> `console.tokwork.com` 2026-10-20 下线；admin 现在有 root 门禁，不再是「同一个 SPA、看角色」。
 
 | 域名 | 谁用 | 说明 |
 |---|---|---|
@@ -748,7 +769,7 @@ gin 对没注册的路径做 301 去斜杠重定向，而**重定向发生在中
 ```bash
 for p in "/api/data/self/" "/api/log/self/" "/api/mj/self/"; do
   printf "%-20s " "$p"
-  curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: https://console.tokwork.com" \
+  curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: https://www.tokwork.com" \
     "https://api.tokwork.com$p"
 done
 # 必须都是 401（走到了鉴权中间件），不能是 301
@@ -770,8 +791,8 @@ done
 | `www.tokwork.com/console/logs` | 调用历史（时间/模型/token/花费/耗时/request id + 筛选分页） | 客户 |
 | `www.tokwork.com/console/account` | 账号信息 + 改密码 | 客户 |
 | `www.tokwork.com/login · /register · /reset · /user/reset` | 登录 / 注册 / 找回密码 | 客户 |
-| `console.tokwork.com/**` | **301 到 `www.tokwork.com/console/**`**（旧地址兜底） | — |
-| `admin.tokwork.com` | 原来的 new-api SPA（Pages 项目 `tokwork-panel`），**只给自己用** | 老板 / 运维 |
+| ~~`console.tokwork.com/**`~~ | **2026-10-20 已下线**（原来 301 到 `/console/**`），不再解析 | — |
+| `admin.tokwork.com` | 原来的 new-api SPA（Pages 项目 `tokwork-panel`），**只给 root 用**，有界面层门禁（见下「root 门禁」） | 项目主人 |
 
 门户和营销站是**同一套 Next.js 应用**（route group `(portal)`，自己的 root layout），
 所以：一个 origin、一套 cookie、一份 CSP、一套设计令牌。代码在
@@ -803,6 +824,95 @@ curl -s -b "$JAR" https://api.tokwork.com/api/user/whoami          # 200 + data.
 curl -s -o /dev/null -w '%{http_code}\n' -b "$JAR" \
   https://api.tokwork.com/api/user/self                            # 401（缺 New-API-User 头）
 ```
+
+#### admin SPA 登录态交接（2026-10-20 修复）
+
+**现象**：从 `admin.tokwork.com` 被踢到
+`https://www.tokwork.com/login?expired=true&next=https%3A%2F%2Fadmin.tokwork.com%2Fconsole`，
+登录成功后回到 admin 又被踢回去，形成死循环。
+
+**根因**（两个叠加）：
+
+1. `admin.tokwork.com` 是老的 new-api SPA，`PrivateRoute` 只认自己域下的
+   `localStorage.user`；营销站登录成功只给 `api.tokwork.com` 种了 session cookie，
+   跨域写不了 admin 的 localStorage。
+2. `web/src/helpers/api.js` 的 `New-API-User` 头只在 axios 实例**创建时**取一次
+   localStorage；即使后来写入了身份，实例上仍然是 `-1`，`/api/user/self` 继续 401。
+
+**修复**（都在 `new-api-pool/web/src`）：
+
+| 文件 | 改动 |
+|---|---|
+| `helpers/bootstrapSession.js` | 新增。渲染前用 cookie 调 `GET /api/user/whoami`，成功就把 `{id, username, role, status, group}` 写进 localStorage |
+| `helpers/api.js` | 新增 request 拦截器，**每次请求**重算 `New-API-User` |
+| `index.jsx` | `await bootstrapSession()` 后再 `root.render(...)`，避免 PrivateRoute 抢跑 |
+
+**验收**（2026-10-20，隔离 Chrome + 测试账号 `tokwork-demo`）：
+
+```
+POST /api/user/login   → 200，Set-Cookie: session
+GET  /api/user/whoami  → 200（带 cookie，不带 New-API-User）
+落地 URL               → https://admin.tokwork.com/console（不再弹回 login）
+清掉 localStorage 后硬刷新 → whoami 200，localStorage 自动恢复，仍在 /console
+```
+
+#### root 门禁（2026-10-20）
+
+**产品决定**：admin 后台只给项目主人（root，`role = 100`）用，客户一律走营销站 `/console`。
+门禁写在同一个 `bootstrapSession.js` 里，它返回 `false` 时 `index.jsx` 不渲染 SPA：
+
+| `whoami` 结果 | 行为 |
+|---|---|
+| 200 且 `role >= 100` | 写 localStorage，正常渲染后台 |
+| 200 且 `role < 100`（客户，含 role 10 的普通管理员） | 清 localStorage，`location.replace("https://www.tokwork.com/console")` |
+| 401 / 403 | 清 localStorage，跳 `www.tokwork.com/login?next=https://admin.tokwork.com/console`；但 `/login` `/register` `/reset` `/user/reset` 这四条交给 `AuthSiteRedirect`（要原样带查询串） |
+| 5xx / 网络失败 | 照常渲染；localStorage 里只保留 root 身份，其余清掉 |
+
+> 这只是**界面层**门禁：页面打得开（Pages 是公网静态站），只是不渲染给非 root。
+> 真正的权限仍是后端按角色校验 —— 客户就算手工调接口也拿不到管理功能。
+> 要连页面都打不开，得上 Cloudflare Access（见 §9，还没做）。
+
+**验收**（2026-10-20）：
+- 隔离浏览器窗口登录测试客户 `tokwork-demo`，打开 `https://admin.tokwork.com/console` →
+  落到 `www.tokwork.com/console`（营销站门户的「Overview」），没有渲染后台
+- 用 node 对 `bootstrapSession` 模拟了上表 7 种情况（root / 客户 / role 10 / 未登录 /
+  未登录访问 `/user/reset` / 5xx 带客户缓存 / 网络失败带 root 缓存），结果都和上表一致
+- **root 本人登录的路径没有在浏览器里实测**（没有 root 凭据），逻辑与修复前一致：写 localStorage 后渲染
+
+#### 现在的 CORS 白名单（已核实 2026-10-20）
+
+服务器 `.env` 里只有营销站这两个域名：
+
+```
+TRUSTED_ORIGINS=https://www.tokwork.com,https://tokwork.com
+```
+
+`ops/deploy/docker-compose.yml` 透传时会把 `https://${ADMIN_DOMAIN}` **固定拼在前面**，
+所以容器里实际拿到的是 `https://admin.tokwork.com,https://www.tokwork.com,https://tokwork.com`。
+同一处把 `FRONTEND_BASE_URL` 设成 `https://${SITE_DOMAIN:-www.tokwork.com}`，
+网页路径的 301 目标因此跟着 `SITE_DOMAIN` 走，默认就是营销站。
+
+`ops/deploy/gen-env.sh` 生成新 `.env` 时也带上这两个变量的默认值：
+`SITE_DOMAIN=${SITE_DOMAIN:-www.tokwork.com}`、`TRUSTED_ORIGINS=${TRUSTED_ORIGINS:-https://tokwork.com}`
+（admin 不用手写，compose 会自动补）。
+
+线上实测（2026-10-20）：
+
+| Origin | Allow-Origin | Allow-Credentials |
+|---|---|---|
+| `https://admin.tokwork.com` | 回显该 Origin | `true` |
+| `https://www.tokwork.com` | 回显该 Origin | `true` |
+| `https://tokwork.com` | 回显该 Origin | `true` |
+| `https://console.tokwork.com`（已下线） | `*` | 不带 |
+| `https://evil.example.com` | `*` | 不带 |
+
+> 改动前的备份在服务器 `/opt/new-api-pool/.env.bak-20261020` 与
+> `/opt/new-api-pool/docker-compose.yml.bak-20261020`。
+
+**部署注意**：`admin.tokwork.com` 是 **legacy Pages** 项目 `tokwork-panel`，
+`cf pages deploy` 明确不支持 legacy Pages（提示改用 `cf deploy`）。本次用
+`cf auth create tokwork-pages` 走 OAuth 设备授权到 `free.lei.sheng@gmail.com`，
+再用该 OAuth token 调 `wrangler pages deploy dist --project-name tokwork-panel`。
 
 #### 面板外观相关的配置（都是 option，不是代码）
 
@@ -838,12 +948,15 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$JAR" \
       现在一律按最低档收（详见 README 的「当前在售」）
 
 > 已完成（2026-10-10）：Hetzner 付费磁盘备份已开；rclone → R2 异地备份已配并实测通过。
-> 已完成（2026-10-10）：宣传站 apex 已从死掉的 `47.245.87.159` 切到 Worker
-> `tokwork-homepage`（先删掉 apex 的 A 记录，再加 Worker 自定义域 ——
-> Cloudflare 不允许自定义域与已有 DNS 记录冲突，会报
-> `Hostname ... already has externally managed DNS records`）。
+> ~~已完成（2026-10-10）：宣传站 apex 已从死掉的 `47.245.87.159` 切到 Worker~~
+> ⚠️ **2026-10-20 核实这条不成立**：apex 的 A 记录确实已经不在了，但 Worker 上也没有 apex 自定义域
+> （改动前查过一次：只有 www 和 console 两个），`homepage/wrangler.jsonc` 的 `routes` 里也没有它。
+> 于是 `tokwork.com` 现在根本不解析。另外注意：`wrangler deploy` 会让自定义域**和 `routes` 保持一致**，
+> 不在 `routes` 里的会被删掉（console 就是这样被删的）。所以就算在后台手动挂了 apex，
+> 下次部署也会被清掉，只能写进 `routes`。
 > 已完成：Pages 项目 `tokwork-panel` 已在 tokwork zone 所在账号
-> `28fa4860…` 上（admin / console 两个域名都指向它，2026-10-10 实测可服务）。
+> `28fa4860…` 上（2026-10-10 时 admin / console 都指向它；console 后来从 Pages 移到了 Worker，
+> 2026-10-20 下线，现在 Pages 上只剩 admin）。
 
 ## 10. 排错速查
 
@@ -856,7 +969,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$JAR" \
 | 面板打开但控制台报 `No 'Access-Control-Allow-Origin' header` | `/api/*` 缺 CORS。见 §3，确认 `SetApiRouter` 里有 `apiRouter.Use(middleware.CORS())`，改完必须重新编译后端二进制并重新部署 |
 | 跨域下某个接口报 `No 'Access-Control-Allow-Origin'`，但 curl 直接请求是 200/401 | 大概率是**尾斜杠 301**：重定向响应不带 CORS 头。用户实测过 `/api/data/self/`、`/api/log/self/`、`/api/mj/self/`。见 §8.6「一条只有跨域才会遇到的坑」 |
 | 营销站登录框点了报「Could not reach the gateway」 | 那是营销站 CSP 拦的（`connect-src` 缺 `https://api.tokwork.com`），不是网关故障。浏览器控制台会明说 `violates the Content Security Policy` |
-| 营销站登录成功、跳到 console 又被踢回 `/login?expired=true` | `?sso_user=<id>` 没传过去，或控制台 `index.html` 的引导脚本没跑 —— 控制台会带 `New-API-User: -1` 请求，后端按「用户不匹配」401。见 §8.6 的 SSO 一节 |
+| 打开 `admin.tokwork.com` 直接跳到 `www.tokwork.com/console` | **预期行为**：当前登录的不是 root 账号（root 门禁，见 §8.6.9）。换 root 账号在 www 登录后再开 admin |
+| `console.tokwork.com` 打不开 / 不解析 | **预期行为**：该域名 2026-10-20 已下线，客户门户只有 `www.tokwork.com/console` |
+| 营销站登录成功、跳到 admin/console 又被踢回 `/login?expired=true` | 2026-10-20 已修：老 SPA 现在启动时用 cookie 调 `/api/user/whoami` 写入 localStorage，并在每个请求上重算 `New-API-User` 头。若仍复现，先确认 `https://admin.tokwork.com/assets/index-*.js` 里含 `whoami`，再查 whoami 是否 200。见 §8.6.9 的「admin SPA 登录态交接」 |
 | 改动生效了但浏览器仍旧报错 | 先硬刷 `Cmd+Shift+R`；CORS 失败会被浏览器短暂记忆，无痕窗口可快速判定 |
 | 号池总览 500 / panic `pool.go:70` | 该模块残留 SQLite 写法。见 changelog v0.5.5：`top_ups` 的列名是 `create_time`（不是 `created_time`），`group`/`key` 必须按方言引用（PG 双引号） |
 | 号池配方列表重复（19 条变 57 条） | 同一根因的连带伤：查询报错被当成"不存在"→ 反复 Insert。v0.5.5 起启动会自愈去重 |

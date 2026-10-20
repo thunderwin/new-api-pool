@@ -15,8 +15,12 @@ cat > .env <<EOF
 
 # ─── 域名 ───
 API_DOMAIN=${API_DOMAIN:-api.tokwork.com}
-# 前端 SPA 所在域名（Cloudflare Pages）。后端只做 API，网页路径会 301 跳到这里。
+# 营销站 + 客户门户（Cloudflare Worker）。后端只做 API，网页路径会 301 跳到这里。
+SITE_DOMAIN=${SITE_DOMAIN:-www.tokwork.com}
+# 管理后台 SPA（Cloudflare Pages），只给 root 用；自动进 CORS 凭证白名单。
 ADMIN_DOMAIN=${ADMIN_DOMAIN:-admin.tokwork.com}
+# 其它要带 Cookie 跨域调 /api/* 的 Origin（逗号分隔）
+TRUSTED_ORIGINS=${TRUSTED_ORIGINS:-https://tokwork.com}
 ACME_EMAIL=${ACME_EMAIL:-info@yijianspace.com}
 
 # ─── 数据库 ───

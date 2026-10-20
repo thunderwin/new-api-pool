@@ -105,15 +105,18 @@ services:
       RELAY_TIMEOUT: "600"
       NODE_TYPE: master
       NODE_NAME: tokwork-nbg1
-      # 前端（React SPA）由 Cloudflare Pages 托管，本服务只做 API：
-      # 设了这个变量后，未注册的网页路径会 301 跳到前端，/api/* 和 /v1/* 不受影响。
-      FRONTEND_BASE_URL: https://${ADMIN_DOMAIN}
-      # 允许「带 Cookie 的跨域请求」的额外 Origin（逗号分隔）。
+      # 本服务只做 API：设了这个变量后，未注册的网页路径（例如有人直接打开
+      # https://api.tokwork.com/）会 301 跳到这里，/api/* 和 /v1/* 不受影响。
+      # 指向**营销站**而不是 admin（2026-10-20）：admin 后台只给 root 自己用，
+      # 不能把路过的客户引过去。
+      FRONTEND_BASE_URL: https://${SITE_DOMAIN:-www.tokwork.com}
+      # 允许「带 Cookie 的跨域请求」的 Origin（逗号分隔），FRONTEND_BASE_URL 也自动算在内。
       # middleware/cors.go 的 trustedCredentialOrigins() 读它，命中才回显具体
       # Origin + Allow-Credentials；否则只给 `*`（不带凭证）。
+      # admin 后台写死在前面：它不再是 FRONTEND_BASE_URL，漏了它整个后台都登不上。
       # ⚠️ 必须在这里透传，光写进 .env 不会进容器 —— 漏了会在浏览器里静默失败，
       #    表现为「登录成功但刷新就掉线」。
-      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
+      TRUSTED_ORIGINS: https://${ADMIN_DOMAIN},${TRUSTED_ORIGINS:-}
       # 让 Go 的 GC 在 576M cgroup 限制内更积极回收
       GOMEMLIMIT: 460MiB
     volumes:

@@ -24,6 +24,7 @@ import '@douyinfe/semi-ui/dist/css/semi.css';
 import { UserProvider } from './context/User';
 import 'react-toastify/dist/ReactToastify.css';
 import { StatusProvider } from './context/Status';
+import { bootstrapSession } from './helpers/bootstrapSession';
 import { ThemeProvider } from './context/Theme';
 import PageLayout from './components/layout/PageLayout';
 import './i18n/i18n';
@@ -55,23 +56,30 @@ function SemiLocaleWrapper({ children }) {
 // initialization
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <StatusProvider>
-      <UserProvider>
-        <BrowserRouter
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
-          <ThemeProvider>
-            <SemiLocaleWrapper>
-              <PageLayout />
-            </SemiLocaleWrapper>
-          </ThemeProvider>
-        </BrowserRouter>
-      </UserProvider>
-    </StatusProvider>
-  </React.StrictMode>,
-);
+
+// 先从营销站的 session cookie 恢复用户，再渲染路由；
+// 否则 PrivateRoute 会在 bootstrap 完成前就把人踢回 /login。
+// 返回 false 表示不是 root（或未登录），已经在跳营销站，不渲染本后台。
+bootstrapSession().then((shouldRender) => {
+  if (!shouldRender) return;
+  root.render(
+    <React.StrictMode>
+      <StatusProvider>
+        <UserProvider>
+          <BrowserRouter
+            future={{
+              v7_startTransition: true,
+              v7_relativeSplatPath: true,
+            }}
+          >
+            <ThemeProvider>
+              <SemiLocaleWrapper>
+                <PageLayout />
+              </SemiLocaleWrapper>
+            </ThemeProvider>
+          </BrowserRouter>
+        </UserProvider>
+      </StatusProvider>
+    </React.StrictMode>,
+  );
+});
