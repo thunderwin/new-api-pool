@@ -59,7 +59,8 @@ docs/
 │   ├── pool-api.md                   /api/pool/* 完整 API 参考
 │   ├── changelog.md                  从 fork 起的关键节点
 │   ├── lessons-learned.md            踩坑大全：路由 / GORM / 反爬 / UI / 编译 …
-│   └── status-and-roadmap.md         当前进度 + 待办池 + 永不做的事
+│   ├── status-and-roadmap.md         当前进度 + 待办池 + 永不做的事
+│   └── upstream-grsai.md             第二个上游候选：Grsai 的接口 / 模型 / 价格调研（2026-10-10，未接入）
 │
 ├── 08-security.md                    密钥处理 / 默认账号 / 暴露面 / 上游 ToS
 └── 09-contributing.md                贡献协作约定
@@ -94,4 +95,3 @@ docs/
 - **不放假图表**：所有 SQL / 数据 / 截图引用都要能反查到文件路径。
 - **保持中文**：代码注释和文档统一用中文（项目个人 fork，不做国际化）。
 - **变更进 changelog**：所有破坏性更改、字段迁移、默认值变化 → 进 [07-reference/changelog.md](./07-reference/changelog.md)。
-
