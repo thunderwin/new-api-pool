@@ -9,14 +9,19 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Token struct {
-	Id                 int            `json:"id"`
-	UserId             int            `json:"user_id" gorm:"index"`
-	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
-	Status             int            `json:"status" gorm:"default:1"`
-	Name               string         `json:"name" gorm:"index" `
+	Id     int    `json:"id"`
+	UserId int    `json:"user_id" gorm:"index;uniqueIndex:idx_tokens_user_idempotency,priority:1"`
+	Key    string `json:"key" gorm:"type:varchar(128);uniqueIndex"`
+	Status int    `json:"status" gorm:"default:1"`
+	Name   string `json:"name" gorm:"index" `
+	// IdempotencyName 只给“管理员替用户建 token”用：创建时写入 name，
+	// 配合 (user_id, idempotency_name) 唯一索引保证并发下也只建一个。
+	// 普通 /api/token/ 创建保持 NULL，不改变原有允许重名的行为。
+	IdempotencyName    *string        `json:"-" gorm:"column:idempotency_name;type:varchar(50);uniqueIndex:idx_tokens_user_idempotency,priority:2"`
 	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
 	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
 	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
@@ -83,6 +88,23 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	var err error
 	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
 	return tokens, err
+}
+
+// GetActiveTokenByUserIdAndName 返回指定用户下未删除的同名 token。
+// GORM 的软删除条件会自动附加 deleted_at IS NULL。
+func GetActiveTokenByUserIdAndName(userId int, name string) (*Token, error) {
+	var token Token
+	// 用 Find + RowsAffected 而不是 First：首次创建是正常路径，
+	// First 会把 “record not found” 当成错误打进 SQL 日志。
+	result := DB.Where("user_id = ? AND name = ?", userId, name).
+		Order("id ASC").Limit(1).Find(&token)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &token, nil
 }
 
 // sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式。
@@ -272,13 +294,18 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Don't return error - fall through to DB
 	}
 	fromDB = true
-	err = DB.Where(commonKeyCol+" = ?", key).First(&token).Error
+	// 按 key 查询时不要走默认 GORM 日志：慢查询/错误会把 key 打进 SQL 日志。
+	err = DB.Session(&gorm.Session{Logger: logger.Discard}).
+		Where(commonKeyCol+" = ?", key).First(&token).Error
 	return token, err
 }
 
 func (token *Token) Insert() error {
 	var err error
-	err = DB.Create(token).Error
+	// 插入失败（例如并发触发 idempotency 唯一索引）时，GORM 默认日志会把
+	// INSERT 语句里的完整 key 打出来。这里丢弃本条语句的 SQL 日志，
+	// 调用方只记录不含 key 的通用错误。
+	err = DB.Session(&gorm.Session{Logger: logger.Discard}).Create(token).Error
 	return err
 }
 
@@ -325,7 +352,15 @@ func (token *Token) Delete() (err error) {
 			})
 		}
 	}()
-	err = DB.Delete(token).Error
+	// 清空幂等键和软删除放在同一个事务里：否则 update 成功、delete 失败时，
+	// 活跃 token 会失去幂等保护。
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if updateErr := tx.Model(&Token{}).Where("id = ?", token.Id).
+			Update("idempotency_name", nil).Error; updateErr != nil {
+			return updateErr
+		}
+		return tx.Delete(token).Error
+	})
 	return err
 }
 
@@ -449,6 +484,12 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 
 	var tokens []Token
 	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Model(&Token{}).Where("user_id = ? AND id IN (?)", userId, ids).
+		Update("idempotency_name", nil).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}

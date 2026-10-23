@@ -12,6 +12,7 @@
 | 读者 | 目标 | 读哪几篇 |
 |---|---|---|
 | **首次接手的开发者** | 5 分钟摸清仓库结构，1 小时跑起本地 | [01-overview](./01-overview/) → [02-development/setup.md](./02-development/setup.md) → [03-deployment/local.md](./03-deployment/local.md) |
+| **API 调用方（客户）** | 拿 Key、鉴权、调各家模型和第三方 API、看懂扣费和报错 | [04-usage/customer-api-guide.md](./04-usage/customer-api-guide.md)（可直接发给客户） |
 | **业务运营 / 老板** | 知道后台哪些菜单做什么、怎么登入、怎么补号 | [04-usage/admin-quickstart.md](./04-usage/admin-quickstart.md) → [04-usage/pool-management.md](./04-usage/pool-management.md) → [04-usage/recipe-walkthrough.md](./04-usage/recipe-walkthrough.md) |
 | **要加新功能的工程师** | 加一个新上游 / 新 Recipe / 新 Provider | [05-architecture/](./05-architecture/) → [02-development/add-recipe.md](./02-development/add-recipe.md) |
 | **运维 / SRE** | 备份、巡检、告警、出事故怎么办 | [06-operations/](./06-operations/) → [07-reference/pool-api.md](./07-reference/pool-api.md) |
@@ -39,7 +40,8 @@ docs/
 │   ├── local.md                      双击 start.command 单机起法
 │   └── production.md                 生产部署链 deploy/，单服务器到多区域
 │
-├── 04-usage/                         后台怎么用
+├── 04-usage/                         后台怎么用 / 客户怎么调
+│   ├── customer-api-guide.md         **对外**调用指南：鉴权、OpenAI/Anthropic/Gemini 三种格式、Capability、计费、错误码
 │   ├── admin-quickstart.md           5 分钟入门管理员后台
 │   ├── pool-management.md            「号池管理」一级菜单 + 6 子菜单完整说明
 │   └── recipe-walkthrough.md         每个内置 Recipe 的人工注册步骤
@@ -57,10 +59,13 @@ docs/
 │
 ├── 07-reference/                     接口 / 变更 / 实录
 │   ├── pool-api.md                   /api/pool/* 完整 API 参考
+│   ├── capability-api.md             第三方同步/异步 Capability API（2026-10-22 上线）
 │   ├── changelog.md                  从 fork 起的关键节点
 │   ├── lessons-learned.md            踩坑大全：路由 / GORM / 反爬 / UI / 编译 …
 │   ├── status-and-roadmap.md         当前进度 + 待办池 + 永不做的事
-│   └── upstream-grsai.md             第二个上游候选：Grsai 的接口 / 模型 / 价格调研（2026-10-10，未接入）
+│   ├── admin-user-token.md           管理员代用户创建 Token API（幂等 / 并发 / 权限）
+│   ├── upstream-grsai.md             第二个上游候选：Grsai 的接口 / 模型 / 价格调研（2026-10-10，未接入）
+│   └── upstream-wokey.md             当前主上游 Wokey：渠道 / 价格 / 验证 / 回滚（2026-10-20）
 │
 ├── 08-security.md                    密钥处理 / 默认账号 / 暴露面 / 上游 ToS
 └── 09-contributing.md                贡献协作约定

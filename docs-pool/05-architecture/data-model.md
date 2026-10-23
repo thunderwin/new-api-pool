@@ -200,6 +200,15 @@
 - `tokens.group`（如果 token 自带分组）覆盖 user 默认分组
 - 路由器拿 `token.group` 去 abilities 表查命中
 
+管理员代用户创建接口（`POST /api/user/:id/token`）额外使用：
+
+- `tokens.idempotency_name`（可空，`varchar(50)`）：管理员代建时写入 name；
+  普通 `/api/token/` 创建的 token 保持 `NULL`。
+- 唯一索引 `idx_tokens_user_idempotency (user_id, idempotency_name)`：保证并发下
+  同一用户 + 同一 name 只创建一条；软删除前会把该列清空，允许同名重建。
+
+接口契约、权限和测试见 [`admin-user-token.md`](../07-reference/admin-user-token.md)。
+
 ## 10. Channel.Type 速查表
 
 | Type | Provider | Channel Base URL 例子 |
