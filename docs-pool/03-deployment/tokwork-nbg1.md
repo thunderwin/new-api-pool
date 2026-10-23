@@ -181,6 +181,7 @@ HTTP 超时掐断 LLM 长流式响应（524）。
 | `docker-compose.yml` | `ops/deploy/docker-compose.yml` |
 | `Caddyfile` | `ops/deploy/Caddyfile` |
 | `gen-env.sh` | `ops/deploy/gen-env.sh` —— 在服务器本地生成 `.env`，密钥不出机器 |
+| `set-capability-secret.sh` | `ops/deploy/set-capability-secret.sh` —— 交互式把 Bright Data API key 经 SSH stdin 写入服务器 `.env`，不进入命令行参数 |
 | `backup.sh` | `ops/deploy/backup.sh` |
 | `.env` | 由 `gen-env.sh` 生成，`chmod 600` |
 
@@ -204,6 +205,32 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 > 注意 `main.go` 里有 `//go:embed web/dist`，所以**编译后端之前必须先构建前端**，
 > 否则 `go build` 会失败。线上设了 `FRONTEND_BASE_URL`，二进制里嵌的这套 SPA
 > 不会被服务（`https://api.tokwork.com/` 是 301，见 §3）。
+
+### Capability 环境变量（2026-10-23）
+
+`web-unlock-v1` 需要两个服务端环境变量，值只写进服务器 `.env`：
+
+| 变量 | 用途 | 是否秘密 |
+|---|---|---|
+| `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
+| `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone；生产值为 `wayfair_unlocker` | 否 |
+
+两个变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
+显式透传；只写 `.env` 不会进入容器。缺任一变量时 `web-unlock-v1` 返回
+`credential_error`，不调用 Bright Data、不扣费。
+
+API key 用交互脚本设置，不要在命令行参数、聊天或文档里传值：
+
+```bash
+cd /path/to/new-api-pool
+./ops/deploy/set-capability-secret.sh
+```
+
+脚本默认目标 `root@2.31.8.21`、远端目录 `/opt/new-api-pool`，可用
+`SSH_TARGET` / `REMOTE_DIR` / `SSH_IDENTITY_FILE` 覆盖。本机实际使用
+`SSH_IDENTITY_FILE="$HOME/.ssh/id_ed25519_tokwork"`。它会先备份 `.env`，原子替换
+`CAPABILITY_BRIGHTDATA_API_KEY=` 行，保持 `chmod 600`，再执行
+`docker compose up -d new-api`，最后只报告“已设置/未设置”。
 
 ## 6. 容器与资源预算
 
@@ -283,11 +310,47 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | `ops/deploy/gen-env.sh` | 在服务器本地生成 `.env`（PG/Redis 密码、SESSION_SECRET、CRYPTO_SECRET） |
 | `ops/deploy/backup.sh` | 每日 pg_dump + 自检 + 清理 + 可选 rclone |
 | `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
+| `ops/deploy/set-capability-secret.sh` | 交互式设置 `CAPABILITY_BRIGHTDATA_API_KEY`，经 SSH stdin 传输并重建后端容器 |
 
 > `ops/` 在**仓库里**（`<REPO>/ops/`）。早前它在仓库外层，
 > 导致别人克隆公开仓库后照着本文找不到脚本 —— 2026-10-10 已移入仓库，
 > 并加了 [`ops/README.md`](../../ops/README.md) 说明它与 `deploy/` 蓝图的分工。
 > 早期 DigitalOcean 试机的 cloud-init 已删除（那台机器早已销毁，留着只会误导）。
+
+### 8.1 `web-unlock-v1` 部署与回滚
+
+**已核实 2026-10-23 的流程：**
+
+1. 在 `new-api-pool/` 构建前端和 linux/amd64 后端，上传 `new-api`。
+2. 上传/更新 `ops/deploy/docker-compose.yml`，确认两个 Capability 环境变量在
+   `new-api.environment` 中显式透传。
+3. 服务器上先备份当前二进制、compose 和 `.env`，再构建/启动容器。
+4. 只读检查 `.env` 是否存在两个变量名，不打印值。
+5. 验证 `/api/status`、容器健康、`GET /v1/capabilities` 的 3 个能力和既有聊天回归。
+
+回滚时恢复同一轮备份的二进制、compose 文件和 `.env`，再执行
+`docker compose up -d`。数据库不参与本次变更。
+
+#### 2026-10-23 本次部署记录
+
+> 以下为已核实事实。
+
+| 项 | 值 |
+|---|---|
+| 开始时间 | `2026-10-23T10:49:01Z` |
+| 二进制 SHA-256 | `d62f672665db901e4f3a5bb27b0bd2c5a13f822fc2e4a24592b1321a68785c75` |
+| 容器内 `/new-api` SHA-256 | 与主机 `new-api` 相同 |
+| 备份 | `new-api.bak-20261023-104810`、`docker-compose.yml.bak-20261023-104810`、`.env.bak-20261023-104810` |
+| `.env` | 已追加 `CAPABILITY_BRIGHTDATA_ZONE=wayfair_unlocker`；`CAPABILITY_BRIGHTDATA_API_KEY` 尚未设置 |
+| compose | 两个 Capability 变量已显式透传；容器内 zone 存在、API key 为空 |
+| 健康 | `/api/status` 200；`new-api-app` healthy；启动错误摘要计数 0 |
+| 能力目录 | 3 个：`weather-v1`、`ssl-analyze-v1`、`web-unlock-v1` |
+| 3100 回归 | `/v1/model/openai/models` 200（42 个模型）；极短 `MiniMax-M3.1-Flash` 非流式对话 200；天气成功；`weather-v1` 空 `input` 返回 400 `invalid_request` |
+| web-unlock（无 key） | 经 3100 返回 502 `gateway_error`；Rakazo 将未知上游 5xx 映射为通用网关错误。New API 用户余额调用前后均为 `4999998`，未扣费 |
+| 回滚 | 未触发 |
+
+真实 Bright Data 抓取尚未验证：本机没有 API key，按约束未调用真实上游。
+维护者设置 key 后再做一次 Wayfair 成功页验证。
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
@@ -295,6 +358,10 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 >
 > 第二个上游候选（Grsai，图片/视频为主）的调研见
 > [`07-reference/upstream-grsai.md`](../07-reference/upstream-grsai.md) —— **只调研，未接入**。
+>
+> **2026-10-20 主上游已切换为 Wokey**：渠道 id `2`（`https://api.wokey.ai`，42 个在售模型，
+> 价格 1:1），apimaster 渠道 id `1` 已停用、abilities 全部关闭。完整配置、价格口径、
+> 验证记录与回滚步骤见 [`07-reference/upstream-wokey.md`](../07-reference/upstream-wokey.md)。
 
 ### 上游
 
@@ -797,6 +864,13 @@ done
 门户和营销站是**同一套 Next.js 应用**（route group `(portal)`，自己的 root layout），
 所以：一个 origin、一套 cookie、一份 CSP、一套设计令牌。代码在
 `homepage/src/app/(portal)/console/**`，样式 `homepage/src/styles/portal.css`。
+
+账号入口（2026-10-20 核实）：
+
+- **未登录**：桌面页头显示「登录 / 获取 API Key」，手机菜单底部同样两项；
+  「获取 API Key」统一指向 `/register`（带语言前缀），不再落到 `/contact`。
+- **已登录**：桌面右上角是账号下拉（概览 / API Key / 调用记录 / 充值 / 账户 / 退出登录）；
+  手机菜单底部显示「控制台 / 退出登录」；门户左侧栏底部也有「退出登录」。
 
 #### 后端加的一个接口：`GET /api/user/whoami`
 

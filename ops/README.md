@@ -21,6 +21,7 @@
 | `deploy/gen-env.sh` | **在服务器本地**生成 `.env`（PG/Redis 密码、`SESSION_SECRET`、`CRYPTO_SECRET`），密钥不出机器 |
 | `deploy/backup.sh` | 每日 `pg_dump` → gzip → 完整性自检 → 清理过期 → 可选 rclone 上传 R2 |
 | `deploy/setup-rclone.sh` | 交互式配置 rclone → Cloudflare R2（`read -s` 读密钥，不落 shell history），写完当场连通自检 |
+| `deploy/set-capability-secret.sh` | 交互式设置 `CAPABILITY_BRIGHTDATA_API_KEY`；`read -rs` 读入后经 SSH stdin 传到服务器，原子更新 `.env` 并重建 `new-api` |
 
 ## 完整流程
 
@@ -34,18 +35,29 @@ VITE_REACT_APP_SERVER_URL="https://api.<domain>" DISABLE_ESLINT_PLUGIN='true' bu
 cd .. && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w" -o new-api-linux-amd64 .
 
 # 3. 传到服务器
-scp new-api-linux-amd64 ops/deploy/{Dockerfile,docker-compose.yml,Caddyfile,gen-env.sh,backup.sh,setup-rclone.sh} \
+scp new-api-linux-amd64 ops/deploy/{Dockerfile,docker-compose.yml,Caddyfile,gen-env.sh,backup.sh,setup-rclone.sh,set-capability-secret.sh} \
     root@<ip>:/opt/new-api-pool/
 
 # 4. 生成密钥 + 起服务
 ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker compose build && docker compose up -d'
 ```
 
-## 两个必须知道的约束
+## 三个必须知道的约束
 
 1. **`main.go` 里有 `//go:embed web/dist`** —— 编后端之前**必须先构建前端**，否则 `go build` 直接失败。
 2. **前端构建要注入 `VITE_REACT_APP_SERVER_URL`** —— 否则 `web/src/helpers/api.js` 的 axios baseURL
    会退化成相对路径，而前端托管在 Cloudflare、后端在服务器上，两边不同域。
+3. **Capability 环境变量必须在 compose 显式透传** —— `CAPABILITY_BRIGHTDATA_API_KEY`
+   和 `CAPABILITY_BRIGHTDATA_ZONE` 只写进 `.env` 不会自动进入容器。生产使用：
+
+   ```bash
+   ./ops/deploy/set-capability-secret.sh
+   ./ops/deploy/set-capability-secret.sh --dry-run
+   # 若 SSH 未在 ~/.ssh/config 绑定该主机：
+   SSH_IDENTITY_FILE="$HOME/.ssh/id_ed25519_tokwork" ./ops/deploy/set-capability-secret.sh
+   ```
+
+   API key 由交互输入提供；不要把它放进命令行参数、shell history 或提交到仓库。
 
 ## 改动本目录时
 
