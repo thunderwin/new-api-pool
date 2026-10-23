@@ -43,12 +43,23 @@
 | API | `https://api.tokwork.com/v1`（网页路径 301 到 www，不到 admin） | Hetzner（灰云直连） |
 
 > `console.tokwork.com` 已于 2026-10-20 **整个下线**（Worker 自定义域与 DNS 都删了），不再做 301。
+> 所有「获取 API Key」CTA 指向 `https://www.tokwork.com/register`（带语言前缀），不再落到联系表单。
 
 **客户看的一切都是我们自己写的**（2026-10-10 定的方向）：门户是营销站这套 Next.js
 应用里的 `/console/**`，不再用 new-api 自带的界面。机制与取舍见
 [`docs-pool/03-deployment/tokwork-nbg1.md`](docs-pool/03-deployment/tokwork-nbg1.md) §8.6.9。
 
-### 当前在售（2026-10-10 核实）
+### 当前在售（2026-10-23 核实）
+
+- **主上游 Wokey**（渠道 id `2`），**在售 42 个模型**（40 文本 + 2 图片，`GET /api/pricing` 实测），
+  价格与 Wokey 1:1。完整切换记录仍保存在本地未提交的运营调研稿中。
+- 第三方 API（Capability）3 个：`weather-v1`、`ssl-analyze-v1`、`web-unlock-v1`，见
+  [`capability-api.md`](docs-pool/07-reference/capability-api.md)。
+- **对外调用文档**：[`docs-pool/04-usage/customer-api-guide.md`](docs-pool/04-usage/customer-api-guide.md)。
+
+> 下面是 2026-10-10 apimaster 时期的记录，**已过时**（apimaster 渠道 2026-10-20 停用），
+> 保留作历史。其中「`sync-upstream-pricing.py` 每日 04:00 自动同步」那条 cron
+> 现在是否还在服务器上跑、会不会覆盖 Wokey 定价 —— **待核实**。
 
 - **1 个渠道**：apimaster（`base_url=https://apimaster.ai`，type=1）。
 - **在售 77 个模型**，`GET /v1/models` 是唯一权威列表：

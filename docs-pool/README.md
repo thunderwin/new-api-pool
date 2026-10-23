@@ -64,8 +64,7 @@ docs/
 │   ├── lessons-learned.md            踩坑大全：路由 / GORM / 反爬 / UI / 编译 …
 │   ├── status-and-roadmap.md         当前进度 + 待办池 + 永不做的事
 │   ├── admin-user-token.md           管理员代用户创建 Token API（幂等 / 并发 / 权限）
-│   ├── upstream-grsai.md             第二个上游候选：Grsai 的接口 / 模型 / 价格调研（2026-10-10，未接入）
-│   └── upstream-wokey.md             当前主上游 Wokey：渠道 / 价格 / 验证 / 回滚（2026-10-20）
+│   └── upstream-grsai.md             第二个上游候选：Grsai 的接口 / 模型 / 价格调研（2026-10-10，未接入）
 │
 ├── 08-security.md                    密钥处理 / 默认账号 / 暴露面 / 上游 ToS
 └── 09-contributing.md                贡献协作约定

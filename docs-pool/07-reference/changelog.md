@@ -13,6 +13,90 @@
 
 ---
 
+## v0.6.4 — Bright Data 网页抓取 Capability（2026-10-23）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增同步能力 `web-unlock-v1`：Bright Data Web Unlocker Direct API，Wayfair HTTPS 页面 → `{status, html}` |
+| `+` | Manifest 通用字段：`request.required`、`request.url_inputs`、`request.env`、`response.success`、`status_header`、`error_header` |
+| `*` | POST body 的 `consts` 不再只服务 query；常量优先于用户输入，`request.env` 可绑定服务端秘密/配置 |
+| `*` | URL 输入拒绝非 HTTPS、非允许域名、userinfo、IP 字面量和非默认端口；预扣费前返回 `400 invalid_request` |
+| `*` | Bright Data HTTP 200 错误封装按 `x-brd-status-code` / `x-brd-error` 识别；`429/502/503/504` 最多重试一次 |
+| `*` | 目标非 200、正文为空、上游错误、超过 8 MiB 均失败退款；错误响应不含上游正文 |
+| `🐛` | `weather-v1` 声明 `latitude` / `longitude` 必填，修掉 `input: {}` 落到 `502 invalid_upstream_json` |
+| `+` | 部署 compose 透传 `CAPABILITY_BRIGHTDATA_API_KEY` / `CAPABILITY_BRIGHTDATA_ZONE`；新增交互式密钥设置脚本 |
+| `+` | 离线测试覆盖成功、重试、域名/URL 预检、常量覆盖、退款、8 MiB 上限和 3 个嵌入 Manifest |
+
+---
+
+## v0.6.3 — Capability 异步 per-unit + content（2026-10-23）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 异步 `per_unit`：提交时按 `estimate_path` 预扣，完成时按 `quantity_path` 结算差额；manifest 必须提供 estimate_path |
+| `+` | `GET /v1/tasks/:id/content`：按 manifest 的 content endpoint 下载文件，带 timeout/大小限制/鉴权/SSRF |
+| `*` | Task.Data 记录 billing 快照（预扣、单价、单位、group ratio、settled），支持终态补扣/退款 |
+| `+` | 测试：per-unit 预估 1 页 → 实际 3 页，验证差额补扣；content 返回 text/plain 文件 |
+
+---
+
+## v0.6.2 — 第三方 Capability API Phase 0/1（2026-10-22）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | `/v1/capabilities`、`/v1/capabilities/:id`、`/v1/tasks`、`/v1/tasks/:id`：用现有 `sk-` token 接入非 LLM 第三方 API |
+| `+` | Manifest/Registry/HTTP executor：同步 JSON、异步 submit/poll、auth、JSON path 映射、timeout、响应大小、SSRF、重试 |
+| `+` | `capability_idempotencies` 表：`(user_id, capability_id, key_hash)` 唯一索引，claim→submit→task id；并发安全 |
+| `*` | Capability 任务使用 `tasks.platform=capability`，并从视频任务轮询器中排除，避免误判 channel 0 |
+| `+` | 免费试点：`weather-v1`（Open-Meteo 同步）、`ssl-analyze-v1`（SSL Labs 异步） |
+| `*` | `PreConsumeTokenQuota` 改为按 token id 查询，避免重复按 key 查询和 key 进入 SQL 日志 |
+| `*` | 文档：新增 `capability-api.md`；`RULES.md` 标记 Phase 0/1 已落地 |
+
+### 线上验证
+
+- 同步天气：200，返回温度/风速
+- 异步 SSL Labs：缓存任务 16 endpoints；新分析任务最终 4 endpoints，grade 全 B
+- 同 idempotency key 重复提交：同 task id，`replayed=true`
+- 原有 chat completion：200，内容 `OK`
+
+---
+
+## v0.6.1 — 管理员代用户创建 Token API（2026-10-20）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | `POST /api/user/:id/token`：管理员使用 access token + `New-Api-User` 为指定用户创建 token，返回完整 `data.key` |
+| `+` | `tokens.idempotency_name`（可空）+ `idx_tokens_user_idempotency (user_id, idempotency_name)` 唯一索引：同名请求幂等，并发只建一条；软删除时清空，允许同名重建 |
+| `*` | `controller/token.go` 抽出 `validateTokenForCreate` / `createTokenForUser`，普通 `/api/token/` 与代建接口共用名称、额度、数量上限和写入逻辑 |
+| `*` | Token 插入与按 key 查询使用 `gorm/logger.Discard`，避免唯一索引冲突/慢查询日志打印完整 key；管理员接口日志只记录 caller/target user id |
+| `+` | 测试：`controller/admin_user_token_test.go`（成功、非管理员、header 不匹配、目标不存在/禁用、角色层级、幂等、并发、删除后重建、共享校验、key 不落错误/日志、索引存在） |
+| `*` | 文档：新增 `docs-pool/07-reference/admin-user-token.md`；更新数据模型与文档目录 |
+
+> 迁移：重启 New API 时 GORM AutoMigrate 会自动增加 `idempotency_name` 列与唯一索引，无需手写 SQL。
+
+---
+
+## v0.6.0 — 主上游切换 Wokey（2026-10-20）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新渠道 `wokey`（id `2`）：`https://api.wokey.ai`，OpenAI 兼容，priority 100，**42 个在售模型**（40 文本 + 2 图片） |
+| `+` | `ops/sync-wokey-pricing.py`：从 `/v1/models/pricing` 读实时价，按 **1:1（不加价）** 整体写入 ModelRatio / CompletionRatio / CacheRatio / CreateCacheRatio / ModelPrice / ImageSizePrice |
+| `*` | apimaster 渠道 id `1` 停用（`status=2`），其 77 条 abilities 全部 `enabled=false`；`/api/pricing` 从 77 个模型收敛到 Wokey 的 42 个 |
+| `🐛` | `setting/ratio_setting/model_ratio.go`：显式 `CompletionRatio` 现在**优先于**硬编码默认值（原顺序会让 gpt-5.6-luna/sol/terra 的输出倍率强制变成 8，和上游真实价不符） |
+| `*` | 文档：§8.5 标记主上游已切换；价格、验证、回滚调研稿保存在本地但未提交 |
+| `!` | 视频模型（grok-imagine-video-1.5 / -lite）**暂未上架**：Wokey 按 `duration_seconds × video_resolution` 计费，现有 Sora 适配器只认 `seconds` / `size`，直接上会算错价 |
+
+### 验证
+
+- `/api/pricing` 返回 42 个模型；42 个模型的输入/输出/缓存/图片单价与 Wokey 逐项 **0 差异**
+- 公开 `/v1/chat/completions`（`claude-sonnet-5`）200
+- 公开流式 `gpt-5.6-terra` 200（首测遇到一次上游 overload，重试成功）
+- 公开 `/v1/images/generations`（`grok-imagine-image-2.0`）200，返回 `b64_json`
+- 扣费对照：`gpt-5.6-terra` 扣 `$0.00001`，Wokey 实际 `$0.00001`；grok 图片扣 `$0.01`，Wokey 实际 `$0.01`
+
+---
+
 ## v0.5.9 — admin 后台只给 root + 下线 console.tokwork.com（2026-10-20）
 
 产品决定：`admin.tokwork.com` **只给项目主人（root）用**，客户一律走营销站 `/console`；

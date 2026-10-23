@@ -361,7 +361,7 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 >
 > **2026-10-20 主上游已切换为 Wokey**：渠道 id `2`（`https://api.wokey.ai`，42 个在售模型，
 > 价格 1:1），apimaster 渠道 id `1` 已停用、abilities 全部关闭。完整配置、价格口径、
-> 验证记录与回滚步骤见 [`07-reference/upstream-wokey.md`](../07-reference/upstream-wokey.md)。
+> 验证记录与回滚步骤保存在本地未提交的运营调研稿中。
 
 ### 上游
 

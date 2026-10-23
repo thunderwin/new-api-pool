@@ -599,13 +599,13 @@ OpenAI 格式接口（含 `/v1/chat/completions`、`/v1/responses`、`/v1/images
 | 503 `model_not_found` | `middleware/distributor.go` |
 | 501 `api_not_implemented` | `controller/relay.go` `RelayNotImplemented` |
 | Capability 契约 / 错误码 / 幂等 | `controller/capability.go`、`capability/executor.go`、[capability-api.md](../07-reference/capability-api.md) |
-| 价格快照与换算 | 2026-10-23 `GET /api/pricing`（42 个模型，分组倍率 default = 1）；换算口径见 [upstream-wokey.md](../07-reference/upstream-wokey.md) §3 |
+| 价格快照与换算 | 2026-10-23 `GET /api/pricing`（42 个模型，分组倍率 default = 1）；换算口径见 §6.2 |
 | 门户地址 | [tokwork-nbg1.md](../03-deployment/tokwork-nbg1.md) §8.6.9 |
 
 **核实状态**
 
-- ✅ 已线上实测：OpenAI Chat（含流式）、图片 `grok-imagine-image-2.0`（返回 `b64_json`）——
-  见 upstream-wokey.md §4；Capability 同步/异步/幂等 —— 见 capability-api.md「线上实测」。
+- ✅ 已线上实测：OpenAI Chat（含流式）、图片 `grok-imagine-image-2.0`（返回 `b64_json`）；
+  Capability 同步/异步/幂等 —— 见 capability-api.md「线上实测」。
 - ⚠️ **只核对了代码路径、还没用真实 Key 实测**（待验证）：
   `/v1/responses`、`/v1/messages`（Anthropic 格式 → 转 OpenAI 发给 Wokey）、
   `/v1beta/models/*`（Gemini 格式 → 转 OpenAI）。三者都由 `relay/channel/openai/adaptor.go`
