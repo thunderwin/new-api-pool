@@ -134,3 +134,9 @@ For request structs that are parsed from client JSON and then re-marshaled to up
 ### Rule 7: Billing Expression System — Read `pkg/billingexpr/expr.md`
 
 When working on tiered/dynamic billing (expression-based pricing), you MUST read `pkg/billingexpr/expr.md` first. It documents the design philosophy, expression language (variables, functions, examples), full system architecture (editor → storage → pre-consume → settlement → log display), token normalization rules (`p`/`c` auto-exclusion), quota conversion, and expression versioning. All code changes to the billing expression system must follow the patterns described in that document.
+
+### Rule 8: Third-Party API Integrations — Read `RULES.md`
+
+All non-LLM / third-party REST API integrations MUST follow [`RULES.md`](./RULES.md).
+Do not add one-off controllers, arbitrary path proxies, or hardcoded provider pricing.
+Use the Capability Manifest design (sync vs async, JSON vs binary, per-call vs per-unit) described there.

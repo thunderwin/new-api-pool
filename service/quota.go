@@ -387,9 +387,15 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	//if relayInfo.TokenUnlimited {
 	//	return nil
 	//}
-	token, err := model.GetTokenByKey(relayInfo.TokenKey, false)
+	// TokenAuth already provides the token id. Load by id instead of looking up
+	// by the raw key: it avoids a second key query and keeps the key out of
+	// database/SQL logs.
+	token, err := model.GetTokenById(relayInfo.TokenId)
 	if err != nil {
 		return err
+	}
+	if token.UserId != relayInfo.UserId {
+		return errors.New("token does not belong to user")
 	}
 	if !relayInfo.TokenUnlimited && token.RemainQuota < quota {
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
