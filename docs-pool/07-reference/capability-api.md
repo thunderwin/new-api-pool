@@ -184,8 +184,10 @@ Capability 任务写入现有 `tasks` 表，`platform = "capability"`。
 
 - key 已设置；zone 改为账户中实际存在的 `web_unlocker2`。
 - 同一 key 和 zone 抓非 premium 站点成功（目标 200）。
-- 抓 wayfair.com 被 Bright Data 拒绝：`x-brd-error-code: premium`，需要在 zone 设置里开启
-  “Premium domains”。开启前 `web-unlock-v1` 仍不可用。
+- 抓 wayfair.com 起初被 Bright Data 拒绝：`x-brd-error-code: premium`。维护者在 zone 设置里
+  开启 “Premium domains” 约 3 分钟后，同一请求目标状态 200，返回 Wayfair 首页。
+- Premium domains 的单价 Bright Data 未公开，按控制台显示为准。
+- 经 `web-unlock-v1` 和 ericBot 网关的端到端调用尚待一次实际使用验证。
 
 ## 仍未实现（下一步）
 

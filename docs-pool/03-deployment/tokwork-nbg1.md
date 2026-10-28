@@ -361,8 +361,10 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | API key | 用 `set-capability-secret.sh` 写入；容器内“已设置”。第一把 key 被 Bright Data 拒绝（401 `Token expired`），已换成新 key |
 | zone | 原值 `wayfair_unlocker` 在该账户中不存在（400 `zone not found`）。账户里唯一的 unblocker zone 是 `web_unlocker2`，`.env` 已改为它（备份 `.env.bak-zone-*`），并重建 `new-api` |
 | 非 premium 站点 | 服务器直连 Bright Data 抓 `https://example.com/`：目标状态 200，标题正确 |
-| Wayfair | 目标状态 400，`x-brd-error-code: premium`：该 zone 需在 Bright Data 控制台开启 “Premium domains” 才能抓 wayfair.com |
-| 结论 | `web-unlock-v1` 仍不可用，等待维护者开启 Premium domains 后再验证 Wayfair 成功页 |
+| Wayfair（开启前） | 目标状态 400，`x-brd-error-code: premium`：该 zone 需在 Bright Data 控制台开启 “Premium domains” 才能抓 wayfair.com |
+| Premium domains | 维护者已开启，zone 计划显示 `ub_premium: 1`；开启后约 3 分钟才生效，期间仍返回 `premium` 错误 |
+| Wayfair（开启后） | 服务器直连抓 `https://www.wayfair.com/`：目标状态 200，正文约 960 KB，标题为 Wayfair 首页 |
+| 结论 | Bright Data 侧已可用。经 New API `web-unlock-v1` 和 ericBot 网关的端到端调用尚待一次实际使用验证 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
