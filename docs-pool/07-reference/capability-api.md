@@ -180,6 +180,13 @@ Capability 任务写入现有 `tasks` 表，`platform = "capability"`。
   `credential_error`；未扣费语义已在 New API 层核实。
 - 真实 Bright Data 成功抓取尚未验证：维护者设置 key 后再测。
 
+## 线上实测（2026-10-28，`web-unlock-v1`）
+
+- key 已设置；zone 改为账户中实际存在的 `web_unlocker2`。
+- 同一 key 和 zone 抓非 premium 站点成功（目标 200）。
+- 抓 wayfair.com 被 Bright Data 拒绝：`x-brd-error-code: premium`，需要在 zone 设置里开启
+  “Premium domains”。开启前 `web-unlock-v1` 仍不可用。
+
 ## 仍未实现（下一步）
 
 - 多供应商优先级/价格/健康度路由

@@ -213,7 +213,7 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 | 变量 | 用途 | 是否秘密 |
 |---|---|---|
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
-| `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone；生产值为 `wayfair_unlocker` | 否 |
+| `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
 
 两个变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺任一变量时 `web-unlock-v1` 返回
@@ -351,6 +351,18 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 
 真实 Bright Data 抓取尚未验证：本机没有 API key，按约束未调用真实上游。
 维护者设置 key 后再做一次 Wayfair 成功页验证。
+
+#### 2026-10-28 设置 Bright Data key
+
+> 以下为已核实事实。
+
+| 项 | 值 |
+|---|---|
+| API key | 用 `set-capability-secret.sh` 写入；容器内“已设置”。第一把 key 被 Bright Data 拒绝（401 `Token expired`），已换成新 key |
+| zone | 原值 `wayfair_unlocker` 在该账户中不存在（400 `zone not found`）。账户里唯一的 unblocker zone 是 `web_unlocker2`，`.env` 已改为它（备份 `.env.bak-zone-*`），并重建 `new-api` |
+| 非 premium 站点 | 服务器直连 Bright Data 抓 `https://example.com/`：目标状态 200，标题正确 |
+| Wayfair | 目标状态 400，`x-brd-error-code: premium`：该 zone 需在 Bright Data 控制台开启 “Premium domains” 才能抓 wayfair.com |
+| 结论 | `web-unlock-v1` 仍不可用，等待维护者开启 Premium domains 后再验证 Wayfair 成功页 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
