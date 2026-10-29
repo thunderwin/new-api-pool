@@ -362,6 +362,9 @@ curl https://api.tokwork.com/v1/capabilities/weather-v1 \
 
 `cost_usd` 是本次实际扣费，`usage` 是计费数量。
 
+Capability 的 Manifest 超时是**整个调用**的总预算（当前 AISA 最长 120 秒），包含
+供应商侧重试和退避。调用方主动断开不会取消已经发出的付费上游请求，也不会因此自动退款。
+
 **网页抓取示例**（`web-unlock-v1`）：
 
 ```bash
@@ -438,7 +441,7 @@ curl https://api.tokwork.com/v1/tasks/task_... \
 |---|---|---|
 | `queued` / `running` | 处理中 | 隔几秒再查（建议 5–10 秒，逐步拉长） |
 | `succeeded` | 成功，结果在 `output` | 结束 |
-| `failed` | 失败，原因在 `error_code` | 结束；**费用自动退回** |
+| `failed` | 上游明确报告任务失败，原因在 `error_code` | 结束；费用自动退回 |
 
 - 任务只能被创建它的账户查询。
 - **幂等**：带 `idempotency_key` 提交时，同一账户、同一能力、同一个 key 重复提交只会创建一个任务；
@@ -446,6 +449,8 @@ curl https://api.tokwork.com/v1/tasks/task_... \
   返回 `409 task_in_progress`，稍后重试即可。网络超时后重试提交时，**务必带上同一个 key**，
   以免重复扣费。同步 Similarweb 能力会把 `idempotency_key` 转成上游
   `Idempotency-Key`；上游重复 key 返回 409，不会重放旧结果。
+- 提交请求已经写出但网关没拿到响应时，结果可能未知；按用量能力会按单次预扣上限计费，
+  并通过错误码和 `cost_usd` 告诉你。此时**不要立即换 key 重试**。
 
 ### 5.4 Capability 的错误格式
 
@@ -464,7 +469,10 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 | 409 | `task_in_progress` | 同一幂等 key 的提交正在进行 |
 | 422 | `cost_cap_exceeded` | 上游预估超过单次成本上限；减少月份、指标或条数后重试；未调用上游、未扣费 |
 | 500 | `credential_error` | 运营方尚未配置上游凭证；未扣费 |
-| 502 | `upstream_http_<状态码>`、`upstream_unreachable`、`invalid_upstream_json`、`upstream_response_too_large` 等 | 第三方供应商出错；已预扣的费用会退回 |
+| 502 | `upstream_http_<状态码>`、`upstream_unreachable` | 供应商拒绝或请求未写出；费用退回 |
+| 502 | `invalid_upstream_json`、`upstream_response_too_large`、`missing_output_field` 等 | 已收到供应商 2xx 但结果无法交付；按用量能力可能仍计费，错误体带 `cost_usd` |
+| 502 | `upstream_request_uncertain` | 请求已写出但连接失败，结果未知；按用量能力按单次上限计费，**不要立即重试** |
+| 504 | `upstream_timeout` | 整体截止时间到；若请求已写出，按用量能力可能已计费，错误体带 `cost_usd`，**不要立即重试** |
 | 502 | `upstream_target_status` | 目标网页不是 HTTP 200；已退款，不返回网页正文 |
 | 502 | `upstream_empty_body` | 目标网页正文为空；已退款 |
 | 503 | `upstream_unavailable` | 第三方或运营方上游暂时不可用；已退款。AISA 余额不足也是这个公共错误 |
@@ -475,6 +483,21 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 > 必填字段在预扣费之前校验；例如 `weather-v1` 传 `"input": {}` 会直接返回
 > `400 invalid_request`。
 
+已结算的错误还可能包含：
+
+```json
+{
+  "success": false,
+  "error_code": "upstream_timeout",
+  "message": "the upstream result is unknown because the overall deadline expired; the request may have been billed, do not retry immediately",
+  "cost_usd": 0.03,
+  "usage_source": "uncertain_reserve"
+}
+```
+
+`cost_usd` 是这次失败请求已经产生的费用；`usage_source` 说明费用来自实际响应头还是
+预扣上限。不要根据 `success=false` 推断一定免费。
+
 ---
 
 ## 6. 计费
@@ -482,7 +505,9 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 ### 6.1 规则
 
 - **先预扣、后结算**：请求开始时按估算预扣，完成后按实际用量多退少补。
-- **失败不收费**：请求出错（含上游出错）时，预扣部分全额退回。
+- **失败不一定免费**：请求未写出、上游明确返回非 2xx、或按次能力执行失败时全额退款；
+  按用量能力已经收到 2xx 后处理失败、或请求已写出但结果未知时，按实际成本或单次预扣上限收费。
+- **断开不等于取消**：客户端断开后网关仍会完成付费上游请求、结算和记账。
 - **余额为 0 即停**：不会透支。
 - 每笔扣费都能在控制台 **调用记录** 里查到（模型、输入/输出 token、金额、request id）。
 
@@ -605,7 +630,8 @@ OpenAI 格式接口（含 `/v1/chat/completions`、`/v1/responses`、`/v1/images
 ### 7.3 重试建议
 
 - **可以重试**：`429`、`500`、`502`、`503`、`504`、网络超时 —— 用指数退避（如 1s、2s、4s，最多 3–5 次）。
-- **不要重试**：`400`、`401`、`403` —— 重试也不会成功。
+- **不要立即重试**：`400`、`401`、`403`；Capability 的 `upstream_timeout` 和
+  `upstream_request_uncertain` 也先查账单/等待结果，避免重复付费。
 - 上游偶发过载时会直接返回 `502`，失败请求不扣费，退避重试即可。
 
 ---

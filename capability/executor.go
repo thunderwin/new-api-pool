@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strconv"
@@ -18,11 +19,21 @@ import (
 )
 
 type ExecutionError struct {
-	Code       string
-	Message    string
-	HTTPStatus int
-	Retryable  bool
-	LogCode    string
+	Code              string
+	Message           string
+	HTTPStatus        int
+	Retryable         bool
+	LogCode           string
+	ResponseReceived  bool
+	RequestWritten    bool
+	MayHaveCharged    bool
+	UpstreamStatus    int
+	BillingHeaders    http.Header
+	BillingRaw        map[string]any
+	UpstreamRequestID string
+	CostUSD           float64
+	Billed            bool
+	UsageSource       string
 }
 
 func (e *ExecutionError) Error() string {
@@ -69,6 +80,19 @@ type httpSpec struct {
 	consts      map[string]string
 	env         map[string]string
 	idempotency string
+}
+
+// OperationContext detaches an upstream operation from the caller connection
+// while preserving request values and enforcing one overall manifest deadline.
+// Once a paid request may have reached the provider, disconnects must not turn
+// the operation into a free call.
+func OperationContext(parent context.Context, m *Manifest) (context.Context, context.CancelFunc) {
+	timeout, err := m.Timeout()
+	if err != nil {
+		timeout = 30 * time.Second
+	}
+	detached := context.WithoutCancel(parent)
+	return context.WithTimeout(detached, timeout)
 }
 
 // ValidateSync checks all request-local errors that can be detected before any
@@ -126,7 +150,7 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 		spec.consts = m.Request.Consts
 		spec.env = m.Request.Env
 	}
-	raw, headers, status, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, headers, statusCode, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
@@ -134,11 +158,11 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	for key, path := range m.Response.Output {
 		value, ok := Lookup(raw, path)
 		if !ok {
-			return nil, &ExecutionError{
+			return nil, attachResponseMetadata(&ExecutionError{
 				Code:       "missing_output_field",
 				Message:    "upstream response did not contain a required field",
 				HTTPStatus: http.StatusBadGateway,
-			}
+			}, m, statusCode, headers, raw, true, upstreamID)
 		}
 		output[key] = value
 	}
@@ -147,7 +171,7 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 		Raw:               raw,
 		Headers:           headers,
 		UpstreamRequestID: upstreamID,
-		HTTPStatus:        status,
+		HTTPStatus:        statusCode,
 	}, nil
 }
 
@@ -168,25 +192,31 @@ func SubmitAsync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	if execErr := validateEnvironment(m); execErr != nil {
 		return nil, execErr
 	}
-	raw, _, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, headers, statusCode, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
 	jobIDValue, ok := Lookup(raw, m.Submit.JobIDPath)
 	if !ok {
-		return nil, &ExecutionError{Code: "missing_job_id", Message: "upstream did not return a job id", HTTPStatus: http.StatusBadGateway}
+		return nil, attachResponseMetadata(
+			&ExecutionError{Code: "missing_job_id", Message: "upstream did not return a job id", HTTPStatus: http.StatusBadGateway},
+			m, statusCode, headers, raw, true, upstreamID,
+		)
 	}
 	jobID, ok := StringValue(jobIDValue)
 	if !ok || strings.TrimSpace(jobID) == "" {
-		return nil, &ExecutionError{Code: "invalid_job_id", Message: "upstream returned an invalid job id", HTTPStatus: http.StatusBadGateway}
+		return nil, attachResponseMetadata(
+			&ExecutionError{Code: "invalid_job_id", Message: "upstream returned an invalid job id", HTTPStatus: http.StatusBadGateway},
+			m, statusCode, headers, raw, true, upstreamID,
+		)
 	}
-	status := ""
+	initialStatus := ""
 	if m.Poll != nil && m.Poll.StatusPath != "" {
 		if v, ok := Lookup(raw, m.Poll.StatusPath); ok {
-			status, _ = StringValue(v)
+			initialStatus, _ = StringValue(v)
 		}
 	}
-	return &AsyncSubmitResult{JobID: jobID, InitialStatus: status, UpstreamRequestID: upstreamID, Raw: raw}, nil
+	return &AsyncSubmitResult{JobID: jobID, InitialStatus: initialStatus, UpstreamRequestID: upstreamID, Raw: raw}, nil
 }
 
 func PollAsync(ctx context.Context, m *Manifest, input map[string]any, jobID string) (*AsyncPollResult, *ExecutionError) {
@@ -206,13 +236,16 @@ func PollAsync(ctx context.Context, m *Manifest, input map[string]any, jobID str
 	if execErr := validateEnvironment(m); execErr != nil {
 		return nil, execErr
 	}
-	raw, _, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, headers, statusCode, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
 	st, ok := Lookup(raw, m.Poll.StatusPath)
 	if !ok {
-		return nil, &ExecutionError{Code: "missing_status", Message: "upstream response did not contain a status", HTTPStatus: http.StatusBadGateway}
+		return nil, attachResponseMetadata(
+			&ExecutionError{Code: "missing_status", Message: "upstream response did not contain a status", HTTPStatus: http.StatusBadGateway},
+			m, statusCode, headers, raw, true, upstreamID,
+		)
 	}
 	status, _ := StringValue(st)
 	out := &AsyncPollResult{Status: status, Raw: raw, UpstreamRequestID: upstreamID}
@@ -233,7 +266,10 @@ func PollAsync(ctx context.Context, m *Manifest, input map[string]any, jobID str
 		if strings.EqualFold(status, v) {
 			result, ok := Lookup(raw, m.Poll.ResultPath)
 			if !ok {
-				return nil, &ExecutionError{Code: "missing_result", Message: "upstream task completed without a result", HTTPStatus: http.StatusBadGateway}
+				return nil, attachResponseMetadata(
+					&ExecutionError{Code: "missing_result", Message: "upstream task completed without a result", HTTPStatus: http.StatusBadGateway},
+					m, statusCode, headers, raw, true, upstreamID,
+				)
 			}
 			out.Result = result
 			out.Completed = true
@@ -261,7 +297,7 @@ func FetchContent(ctx context.Context, m *Manifest, input map[string]any, jobID 
 	if err != nil {
 		return nil, "", &ExecutionError{Code: "invalid_request", Message: "failed to build content URL", HTTPStatus: http.StatusBadRequest}
 	}
-	if err := validateUpstreamURL(fullURL); err != nil {
+	if err := validateUpstreamURLContext(ctx, fullURL); err != nil {
 		return nil, "", &ExecutionError{Code: "upstream_not_allowed", Message: "content endpoint is not allowed", HTTPStatus: http.StatusBadGateway}
 	}
 	req, err := http.NewRequestWithContext(ctx, defaultMethod(m.Content.Method), fullURL, nil)
@@ -278,7 +314,7 @@ func FetchContent(ctx context.Context, m *Manifest, input map[string]any, jobID 
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
 			}
-			return validateUpstreamURL(next.URL.String())
+			return validateUpstreamURLContext(next.Context(), next.URL.String())
 		},
 	}
 	resp, err := client.Do(req)
@@ -312,6 +348,11 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 	if err != nil {
 		return nil, nil, 0, "", &ExecutionError{Code: "invalid_timeout", Message: "capability timeout is invalid", HTTPStatus: http.StatusInternalServerError}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	maxBytes := m.Limits.MaxResponseBytes
 	if maxBytes <= 0 {
 		maxBytes = 1024 * 1024
@@ -325,7 +366,7 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 	if err != nil {
 		return nil, nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to build upstream request", HTTPStatus: http.StatusBadRequest}
 	}
-	if err := validateUpstreamURL(endpoint); err != nil {
+	if err := validateUpstreamURLContext(ctx, endpoint); err != nil {
 		return nil, nil, 0, "", &ExecutionError{Code: "upstream_not_allowed", Message: "upstream endpoint is not allowed", HTTPStatus: http.StatusBadGateway}
 	}
 
@@ -364,12 +405,11 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 	}
 
 	client := &http.Client{
-		Timeout: timeout,
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
 			}
-			return validateUpstreamURL(next.URL.String())
+			return validateUpstreamURLContext(next.Context(), next.URL.String())
 		},
 	}
 
@@ -379,6 +419,16 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 	}
 	var lastErr *ExecutionError
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, nil, 0, "", lastErr
+			}
+			return nil, nil, 0, "", &ExecutionError{
+				Code:       "upstream_timeout",
+				Message:    "the overall capability deadline expired before the request was sent",
+				HTTPStatus: http.StatusGatewayTimeout,
+			}
+		}
 		var bodyReader io.Reader
 		if bodyBytes != nil {
 			bodyReader = bytes.NewReader(bodyBytes)
@@ -401,23 +451,42 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 			return nil, nil, 0, "", &ExecutionError{Code: "credential_error", Message: "upstream credential is not configured", HTTPStatus: http.StatusInternalServerError}
 		}
 
+		requestWritten := false
+		trace := &httptrace.ClientTrace{
+			WroteRequest: func(httptrace.WroteRequestInfo) {
+				// Any completed write callback means the request may have reached
+				// the provider. Retrying after this point can incur duplicate cost.
+				requestWritten = true
+			},
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = &ExecutionError{Code: "upstream_unreachable", Message: "upstream request failed", HTTPStatus: http.StatusBadGateway}
-			if attempt < attempts {
-				time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+			if !requestWritten && ctx.Err() == nil && attempt < attempts {
+				if !waitForRetry(ctx, time.Duration(attempt)*200*time.Millisecond) {
+					break
+				}
 				continue
 			}
+			lastErr = transportExecutionError(ctx, requestWritten)
 			return nil, nil, 0, "", lastErr
 		}
+		headers := resp.Header.Clone()
+		upstreamID := responseRequestID(headers)
 		limited := io.LimitReader(resp.Body, maxBytes+1)
 		rawBody, readErr := io.ReadAll(limited)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return nil, nil, 0, "", &ExecutionError{Code: "upstream_read_failed", Message: "failed to read upstream response", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, resp.StatusCode, "", attachResponseMetadata(
+				&ExecutionError{Code: "upstream_read_failed", Message: "failed to read upstream response", HTTPStatus: http.StatusBadGateway},
+				m, resp.StatusCode, headers, nil, true, upstreamID,
+			)
 		}
 		if int64(len(rawBody)) > maxBytes {
-			return nil, nil, 0, "", &ExecutionError{Code: "upstream_response_too_large", Message: "upstream response exceeded the limit", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, resp.StatusCode, "", attachResponseMetadata(
+				&ExecutionError{Code: "upstream_response_too_large", Message: "upstream response exceeded the limit", HTTPStatus: http.StatusBadGateway},
+				m, resp.StatusCode, headers, nil, true, upstreamID,
+			)
 		}
 		effectiveStatus := resp.StatusCode
 		if m.Response != nil && m.Response.StatusHeader != "" {
@@ -434,34 +503,129 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 			}
 			lastErr = mapUpstreamHTTPError(m.Response, rawBody, codeStatus)
 			lastErr.Retryable = containsInt(m.Retry.RetryOn, codeStatus)
-			if attempt < attempts && lastErr.Retryable {
-				time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+			lastErr = attachResponseMetadata(lastErr, m, resp.StatusCode, headers, nil, false, upstreamID)
+			if attempt < attempts && lastErr.Retryable && ctx.Err() == nil {
+				if !waitForRetry(ctx, time.Duration(attempt)*200*time.Millisecond) {
+					break
+				}
 				continue
 			}
-			return nil, nil, resp.StatusCode, "", lastErr
+			return nil, nil, resp.StatusCode, upstreamID, lastErr
 		}
 		var parsed map[string]any
 		if err := common.Unmarshal(rawBody, &parsed); err != nil {
-			return nil, nil, resp.StatusCode, "", &ExecutionError{Code: "invalid_upstream_json", Message: "upstream returned invalid JSON", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, resp.StatusCode, upstreamID, attachResponseMetadata(
+				&ExecutionError{Code: "invalid_upstream_json", Message: "upstream returned invalid JSON", HTTPStatus: http.StatusBadGateway},
+				m, resp.StatusCode, headers, nil, true, upstreamID,
+			)
 		}
 		if m.Response != nil && m.Response.Success != nil {
 			if successErr := validateResponseSuccess(m.Response.Success, parsed); successErr != nil {
-				successErr.Retryable = successErr.Code == successFailureCode(m.Response.Success) &&
-					containsInt(m.Retry.RetryOn, statusFromResponse(m.Response.Success, parsed))
-				if attempt < attempts && successErr.Retryable {
-					time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
-					continue
-				}
-				return nil, nil, resp.StatusCode, "", successErr
+				// A 2xx response may already be billed. Never retry after it was
+				// received, even when its business status is a known retry value.
+				return nil, nil, resp.StatusCode, upstreamID, attachResponseMetadata(
+					successErr, m, resp.StatusCode, headers, parsed, true, upstreamID,
+				)
 			}
 		}
-		upstreamID := resp.Header.Get("X-Request-Id")
-		if upstreamID == "" {
-			upstreamID = resp.Header.Get("X-Request-ID")
-		}
-		return parsed, resp.Header.Clone(), resp.StatusCode, upstreamID, nil
+		return parsed, headers, resp.StatusCode, upstreamID, nil
+	}
+	if ctx.Err() != nil && lastErr != nil {
+		return nil, nil, 0, "", lastErr
 	}
 	return nil, nil, 0, "", lastErr
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func transportExecutionError(ctx context.Context, requestWritten bool) *ExecutionError {
+	if requestWritten {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return &ExecutionError{
+				Code:             "upstream_timeout",
+				Message:          "the upstream result is unknown because the overall deadline expired; the request may have been billed, do not retry immediately",
+				HTTPStatus:       http.StatusGatewayTimeout,
+				RequestWritten:   true,
+				ResponseReceived: false,
+				MayHaveCharged:   true,
+			}
+		}
+		return &ExecutionError{
+			Code:             "upstream_request_uncertain",
+			Message:          "the upstream connection failed after the request was sent; the result is unknown, do not retry immediately",
+			HTTPStatus:       http.StatusBadGateway,
+			RequestWritten:   true,
+			ResponseReceived: false,
+			MayHaveCharged:   true,
+		}
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &ExecutionError{
+			Code:       "upstream_timeout",
+			Message:    "the capability deadline expired before the request was written",
+			HTTPStatus: http.StatusGatewayTimeout,
+		}
+	}
+	return &ExecutionError{
+		Code:       "upstream_unreachable",
+		Message:    "upstream request failed before it was sent",
+		HTTPStatus: http.StatusBadGateway,
+	}
+}
+
+func attachResponseMetadata(
+	err *ExecutionError,
+	m *Manifest,
+	status int,
+	headers http.Header,
+	raw map[string]any,
+	mayHaveCharged bool,
+	upstreamID string,
+) *ExecutionError {
+	if err == nil {
+		return nil
+	}
+	err.ResponseReceived = true
+	err.RequestWritten = true
+	err.MayHaveCharged = mayHaveCharged
+	err.UpstreamStatus = status
+	err.BillingHeaders = billingHeaders(m, headers)
+	err.BillingRaw = raw
+	err.UpstreamRequestID = upstreamID
+	if status > 0 && err.HTTPStatus == 0 {
+		err.HTTPStatus = status
+	}
+	return err
+}
+
+func billingHeaders(m *Manifest, headers http.Header) http.Header {
+	if m == nil || headers == nil || strings.TrimSpace(m.Billing.QuantityHeader) == "" {
+		return nil
+	}
+	value := strings.TrimSpace(headers.Get(m.Billing.QuantityHeader))
+	if value == "" {
+		return nil
+	}
+	return http.Header{http.CanonicalHeaderKey(m.Billing.QuantityHeader): []string{value}}
+}
+
+func responseRequestID(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	if id := headers.Get("X-Request-ID"); id != "" {
+		return id
+	}
+	return headers.Get("X-Request-Id")
 }
 
 func buildURL(endpoint string, query map[string]string, defaults map[string]any, input map[string]any) (string, error) {
@@ -759,6 +923,10 @@ func applyAuth(req *http.Request, auth *AuthSpec) error {
 }
 
 func validateUpstreamURL(raw string) error {
+	return validateUpstreamURLContext(context.Background(), raw)
+}
+
+func validateUpstreamURLContext(ctx context.Context, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("invalid url")
@@ -771,11 +939,12 @@ func validateUpstreamURL(raw string) error {
 	if allowPrivate {
 		return nil
 	}
-	ips, err := net.LookupIP(u.Hostname())
-	if err != nil || len(ips) == 0 {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname())
+	if err != nil || len(addrs) == 0 {
 		return fmt.Errorf("cannot resolve host")
 	}
-	for _, ip := range ips {
+	for _, addr := range addrs {
+		ip := addr.IP
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
 			return fmt.Errorf("private address is not allowed")
 		}

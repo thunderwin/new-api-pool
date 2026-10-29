@@ -22,6 +22,7 @@
 | `deploy/backup.sh` | 每日 `pg_dump` → gzip → 完整性自检 → 清理过期 → 可选 rclone 上传 R2 |
 | `deploy/setup-rclone.sh` | 交互式配置 rclone → Cloudflare R2（`read -s` 读密钥，不落 shell history），写完当场连通自检 |
 | `deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量（默认 Bright Data key）；`read -rs` 读入后经 SSH stdin 传到服务器，原子更新 `.env` 并重建 `new-api` |
+| `reconcile-capability-aisa.py` | 只读核对 AISA 每日实际扣费与中转站日志成本；密钥和数据库凭证只在容器内使用 |
 
 ## 完整流程
 
@@ -67,3 +68,19 @@ ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker c
 
 按 GEB 规矩，改脚本要**顺手改脚本内的注释**，并同步
 [`../docs-pool/03-deployment/tokwork-nbg1.md`](../docs-pool/03-deployment/tokwork-nbg1.md) 里对应的说明。
+
+## AISA Capability 对账
+
+生产机从 `/opt/new-api-pool` 运行：
+
+```bash
+python3 /opt/new-api-pool/reconcile-capability-aisa.py \
+  --compose-dir /opt/new-api-pool \
+  --since 2026-10-29 --until 2026-10-29
+```
+
+脚本汇总 AISA `GET /v1/usage` 的 `charged_micros_usd` 与消费日志
+`other.provider=aisa` 的 `usage_quantity`。AISA 是 UTC 日桶；差额阈值是
+`max($0.05, 上游金额的 2%)`。标准输出只有日期、两个金额和差额，并把同样的
+结果追加到 `logs/aisa-capability-reconcile.jsonl`。API 进程另有每日自动任务，
+超阈值时通过现有 root 通知机制告警。

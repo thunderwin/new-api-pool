@@ -13,6 +13,10 @@
 >
 > 2026-10-29 追加：通用执行器支持 POST 数组 body、静态请求头、响应头用量、
 > 固定预扣上限和稳定错误映射；接入 AISA 的 16 个搜索/SEO 能力。
+>
+> 2026-10-29 追加（已实现并离线核实）：付费 Capability 不随调用方断开而取消；
+> 一次调用使用单一整体截止时间；已写出请求在传输错误后不重试；2xx 后处理失败和
+> 结果未知的按用量调用按实际成本或预扣上限结算。每日 AISA 用量自动对账。
 
 ## 路由
 
@@ -75,7 +79,8 @@ POST /v1/capabilities/weather-v1
 | `error_code_path` | 从 JSON 错误体提取上游 code；正文为字符串时忽略 |
 | `error_map` | 上游 code 或 HTTP 状态到 `{code, http_status, message, log_code}` 的稳定映射；用户只看到公共文案 |
 
-业务失败沿用统一退款路径。错误响应和日志不回传上游正文；目标状态码可以作为数字记录。
+业务失败按调用是否可能已经到达上游计费，不再一律退款。错误响应和日志不回传上游正文；
+目标状态码可以作为数字记录。
 
 AISA 的 402 余额不足属于**运营方账户余额**，统一映射为 `503 upstream_unavailable`；
 401 / `authentication_unavailable` 也是 `503`，日志分别记为上游鉴权错误。
@@ -223,6 +228,84 @@ price_usd × quantity × QuotaPerUnit × GroupRatio
 本批能力因此保留 `reserve_usd` 兜底。`X-AISA-Max-Price-USD` 只是准入检查。
 AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficient`；客户收到
 `503 upstream_unavailable`，维护者需要给 AISA 账户充值。
+
+### 付费调用生命周期与失败计费（2026-10-29 已核实）
+
+- 同步、异步提交、轮询和内容下载收到请求后，用
+  `context.WithoutCancel(c.Request.Context())` 脱离调用方连接，再套 Manifest 的
+  `limits.timeout`。客户端断开、桌面 Stop 或网关超时不会取消已经开始的付费上游操作。
+- Manifest timeout 是一次能力调用的总预算，覆盖连接、所有重试和退避。执行器不再给
+  每次尝试各发一份 timeout。
+- 非 2xx 只按 `retry.retry_on` 重试。传输错误使用 `httptrace.WroteRequest` 判断：
+  DNS、连接拒绝、TLS 握手失败等未写出请求可以重试；请求写出后一律不重试。
+- 2xx 已经开始或可能已经计费，因此读到 2xx 后不按业务状态再重试。读正文失败、
+  超过 `max_response_bytes`、JSON 无效、`response.success` 不通过、
+  `missing_output_field`、`capabilitySyncUsage` 失败等返回原业务错误，但先计费。
+- 同步按用量能力在请求写出后没拿到响应（例如总 deadline 到期、连接在响应途中断开）
+  返回 `504 upstream_timeout` 或 `502 upstream_request_uncertain`。结果未知时按
+  `reserve_usd` 结算，日志记 `usage_source=uncertain_reserve`；调用方不要立即重试。
+- `per_call` 保持原有语义：执行错误全额退款，包括已写出后的超时。它仍存在
+  “上游已扣费但网关只能看到传输错误”的理论风险；本次没有改变其价格或退款规则。
+
+| 上游结果 | `per_unit`（按用量） | `per_call` |
+|---|---|---|
+| 2xx 且计量头有效 | 按头里的实际数量结算，可为 0 | 按次结算 |
+| 2xx 但计量头缺失或非法，有 reserve | 按 `reserve_usd` 结算，`reserve_fallback` | 按次结算 |
+| 2xx 后读正文/大小/JSON/success/output 处理失败 | 按有效成本头结算；无有效头按 reserve | 退款 |
+| 请求已写出但没拿到响应 | 按 `reserve_usd` 结算，`uncertain_reserve` | 退款 |
+| 非 2xx | 全额退款 | 全额退款 |
+| 请求未写出（DNS/连接拒绝/TLS 等） | 全额退款 | 全额退款 |
+
+错误响应在已经结算时带 `cost_usd` 和 `usage_source`，不返回上游正文。`cost_usd`
+是本次实际应收金额，不是下一次调用的报价。
+
+### `usage_source`
+
+| 值 | 含义 |
+|---|---|
+| `response_header` | 从成功响应头取得实际用量 |
+| `response_body` | 从成功响应正文的 `quantity_path` 取得实际用量 |
+| `reserve_fallback` | 2xx 后成本未知，或后处理失败时按 `reserve_usd` 兜底 |
+| `uncertain_reserve` | 请求已写出但结果未知，按 `reserve_usd` 结算 |
+| `estimated` | 异步提交时按 `estimate_path` 预扣；完成后再按实际用量补差 |
+| `call` | `per_call` 按次计费 |
+
+### 结算失败
+
+`SettleBilling` 失败时会最多尝试 3 次。仍失败时不会退款或假装成功：
+
+- 钱包或订阅的预扣仍保留；钱包已扣的预扣额度在用户账上可见，订阅预扣记录也未释放。
+- 消费日志写 `status=billing_failed`，`quota` 等于应收额度，并保留
+  `upstream_request_id`、`usage_source`。
+- 服务端写 `ERROR capability billing settlement failed after retries`，供人工补扣。
+
+### AISA 每日对账
+
+AISA 文档把 `GET https://api.aisa.one/v1/usage` 定义为按 key 读取的账户用量接口；
+官方 CLI/API 文档将 `balance` / `usage` 列为免费，接口使用 UTC `1d` bucket，
+`charged_micros_usd` 是实际扣费。核实日期：2026-10-29。
+
+- 自动任务在主节点每天 UTC 01:00 后核对前一日，每 30 分钟检查一次；失败会继续重试，
+  成功后当日不再跑。
+- 上游金额取 `charged_micros_usd` 合计；中转站金额只汇总消费日志
+  `other.provider=aisa` 的 `usage_quantity`，不使用加价后的 `quota`。
+- 差额阈值为 `max(0.05 USD, 上游金额的 2%)`。超阈值写 WARN，并通过现有
+  `NotifyRootUser` 通知 root。
+- 手动补跑：
+
+```bash
+# 仓库 checkout
+python3 ops/reconcile-capability-aisa.py --since 2026-10-29 --until 2026-10-29
+
+# 生产机（部署到 /opt/new-api-pool/reconcile-capability-aisa.py）
+python3 /opt/new-api-pool/reconcile-capability-aisa.py \
+  --compose-dir /opt/new-api-pool \
+  --since 2026-10-29 --until 2026-10-29
+```
+
+脚本只在 `new-api` 容器内引用 `$CAPABILITY_AISA_API_KEY`，数据库凭证只留在
+Postgres 容器；输出和 `logs/aisa-capability-reconcile.jsonl` 只含日期、上游金额、
+日志金额和差额。
 
 ## 幂等与并发
 

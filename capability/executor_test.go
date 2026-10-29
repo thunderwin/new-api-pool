@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -840,8 +841,194 @@ func TestSyncMissingOutputAndTimeout(t *testing.T) {
 			Retry:    RetrySpec{Attempts: 1, RetryOn: []int{429, 503}},
 		}
 		_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
-		if execErr == nil || execErr.Code != "upstream_unreachable" {
-			t.Fatalf("expected timeout to surface as upstream_unreachable, got %#v", execErr)
+		if execErr == nil || execErr.Code != "upstream_timeout" || !execErr.RequestWritten || !execErr.MayHaveCharged {
+			t.Fatalf("expected an uncertain upstream timeout, got %#v", execErr)
 		}
 	})
+}
+
+func TestOverallDeadlineCoversRetriesAndBackoff(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	m := &Manifest{
+		ID:       "overall-deadline-test-v1",
+		Provider: "test",
+		Mode:     ModeSync,
+		Endpoint: server.URL,
+		Method:   http.MethodGet,
+		Response: &ResponseSpec{Output: map[string]string{"ok": "$.ok"}},
+		Billing:  BillingSpec{Type: BillingPerUnit, PriceUSD: 0.000001, QuantityHeader: "X-Cost", ReserveUSD: 0.01},
+		Limits:   LimitsSpec{Timeout: "40ms", MaxResponseBytes: 4096},
+		Retry:    RetrySpec{Attempts: 5, RetryOn: []int{http.StatusServiceUnavailable}},
+	}
+	started := time.Now()
+	_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
+	elapsed := time.Since(started)
+	if execErr == nil || !execErr.ResponseReceived || !execErr.RequestWritten || execErr.MayHaveCharged {
+		t.Fatalf("expected a terminal non-2xx retry failure, got %#v", execErr)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("retry backoff exceeded the overall deadline: attempts=%d", attempts.Load())
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("overall deadline was not enforced: %s", elapsed)
+	}
+}
+
+func TestWrittenTimeoutIsUncertainAndNotRetried(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		time.Sleep(100 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	m := &Manifest{
+		ID:       "written-timeout-test-v1",
+		Provider: "test",
+		Mode:     ModeSync,
+		Endpoint: server.URL,
+		Method:   http.MethodGet,
+		Response: &ResponseSpec{Output: map[string]string{"ok": "$.ok"}},
+		Billing:  BillingSpec{Type: BillingPerUnit, PriceUSD: 0.000001, QuantityHeader: "X-Cost", ReserveUSD: 0.01},
+		Limits:   LimitsSpec{Timeout: "20ms", MaxResponseBytes: 4096},
+		Retry:    RetrySpec{Attempts: 3, RetryOn: []int{429, 503}},
+	}
+	_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
+	if execErr == nil || execErr.Code != "upstream_timeout" || !execErr.RequestWritten || !execErr.MayHaveCharged {
+		t.Fatalf("expected an uncertain timeout, got %#v", execErr)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("a request written upstream was retried: attempts=%d", attempts.Load())
+	}
+}
+
+func TestUnwrittenTransportFailureRetries(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	endpoint := closed.URL
+	closed.Close()
+	m := &Manifest{
+		ID:       "unwritten-retry-test-v1",
+		Provider: "test",
+		Mode:     ModeSync,
+		Endpoint: endpoint,
+		Method:   http.MethodGet,
+		Response: &ResponseSpec{Output: map[string]string{"ok": "$.ok"}},
+		Billing:  BillingSpec{Type: BillingPerUnit, PriceUSD: 0.000001, QuantityHeader: "X-Cost", ReserveUSD: 0.01},
+		Limits:   LimitsSpec{Timeout: "1s", MaxResponseBytes: 4096},
+		Retry:    RetrySpec{Attempts: 2, RetryOn: []int{429, 503}},
+	}
+	started := time.Now()
+	_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
+	if execErr == nil || execErr.Code != "upstream_unreachable" || execErr.RequestWritten || execErr.MayHaveCharged {
+		t.Fatalf("expected a safe transport failure after retries, got %#v", execErr)
+	}
+	if elapsed := time.Since(started); elapsed < 150*time.Millisecond {
+		t.Fatalf("expected the unwritten transport failure to retry, elapsed=%s", elapsed)
+	}
+}
+
+func TestPost2xxProcessingErrorsRetainBillingMetadata(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	tests := []struct {
+		name     string
+		body     string
+		maxBytes int64
+		success  *SuccessSpec
+		output   map[string]string
+		wantCode string
+	}{
+		{
+			name:     "too large",
+			body:     `{"ok":true,"padding":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`,
+			maxBytes: 16,
+			output:   map[string]string{"ok": "$.ok"},
+			wantCode: "upstream_response_too_large",
+		},
+		{
+			name:     "invalid json",
+			body:     `{not-json`,
+			maxBytes: 4096,
+			output:   map[string]string{"ok": "$.ok"},
+			wantCode: "invalid_upstream_json",
+		},
+		{
+			name:     "success check",
+			body:     `{"ok":false}`,
+			maxBytes: 4096,
+			success:  &SuccessSpec{Path: "$.ok", Values: []any{true}, FailureCode: "target_failed"},
+			output:   map[string]string{"ok": "$.ok"},
+			wantCode: "target_failed",
+		},
+		{
+			name:     "missing output",
+			body:     `{"other":true}`,
+			maxBytes: 4096,
+			output:   map[string]string{"ok": "$.ok"},
+			wantCode: "missing_output_field",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Cost", "12345")
+				w.Header().Set("X-Request-ID", "upstream-request")
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			m := &Manifest{
+				ID:       "post-2xx-test-v1",
+				Provider: "test",
+				Mode:     ModeSync,
+				Endpoint: server.URL,
+				Method:   http.MethodGet,
+				Response: &ResponseSpec{Output: test.output, Success: test.success},
+				Billing:  BillingSpec{Type: BillingPerUnit, PriceUSD: 0.000001, QuantityHeader: "X-Cost", ReserveUSD: 0.01},
+				Limits:   LimitsSpec{Timeout: "1s", MaxResponseBytes: test.maxBytes},
+				Retry:    RetrySpec{Attempts: 3, RetryOn: []int{429, 503}},
+			}
+			_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
+			if execErr == nil || execErr.Code != test.wantCode {
+				t.Fatalf("unexpected error: %#v", execErr)
+			}
+			if !execErr.ResponseReceived || !execErr.RequestWritten || !execErr.MayHaveCharged ||
+				execErr.UpstreamStatus != http.StatusOK ||
+				execErr.BillingHeaders.Get("X-Cost") != "12345" ||
+				execErr.UpstreamRequestID != "upstream-request" {
+				t.Fatalf("missing billing metadata: %#v", execErr)
+			}
+		})
+	}
+}
+
+func TestNon2xxResponseIsNotMarkedChargeable(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Cost", "999")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad"}`))
+	}))
+	defer server.Close()
+	m := &Manifest{
+		ID:       "non-2xx-test-v1",
+		Provider: "test",
+		Mode:     ModeSync,
+		Endpoint: server.URL,
+		Method:   http.MethodGet,
+		Response: &ResponseSpec{Output: map[string]string{"ok": "$.ok"}},
+		Billing:  BillingSpec{Type: BillingPerUnit, PriceUSD: 0.000001, QuantityHeader: "X-Cost", ReserveUSD: 0.01},
+		Limits:   LimitsSpec{Timeout: "1s", MaxResponseBytes: 4096},
+		Retry:    RetrySpec{Attempts: 2, RetryOn: []int{429, 503}},
+	}
+	_, execErr := ExecuteSync(context.Background(), m, map[string]any{}, "")
+	if execErr == nil || execErr.UpstreamStatus != http.StatusBadRequest || execErr.MayHaveCharged {
+		t.Fatalf("non-2xx response must not be chargeable: %#v", execErr)
+	}
 }

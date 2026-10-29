@@ -34,6 +34,8 @@ type asyncCapabilityRequest struct {
 	IdempotencyKey string         `json:"idempotency_key"`
 }
 
+var settleCapabilityBillingRequest = service.SettleBilling
+
 func ListCapabilities(c *gin.Context) {
 	items := make([]gin.H, 0)
 	for _, m := range capability.List() {
@@ -100,32 +102,67 @@ func ExecuteCapability(c *gin.Context) {
 		return
 	}
 
-	result, execErr := capability.ExecuteSync(c.Request.Context(), m, req.Input, req.IdempotencyKey)
+	operationCtx, cancel := capability.OperationContext(c.Request.Context(), m)
+	defer cancel()
+	result, execErr := capability.ExecuteSync(operationCtx, m, req.Input, req.IdempotencyKey)
 	if execErr != nil {
-		refundCapabilityBilling(c, info)
-		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, execErr.LogCode, "", "call", 0, "sync", "")
-		respondCapabilityError(c, execErr)
+		quota, unit, quantity, usageSource, settleFailed := settleCapabilityExecutionFailure(c, m, info, priceData, execErr)
+		status := "failed"
+		if settleFailed {
+			status = "billing_failed"
+		} else if capabilityClientGone(c) {
+			status = "client_gone"
+		}
+		logCapabilityConsume(c, m, info, quota, status, execErr.Code, execErr.LogCode, execErr.UpstreamRequestID, unit, quantity, "sync", usageSource)
+		respondCapabilityErrorUnlessGone(c, execErr)
 		return
 	}
 
 	actualQuota, usageUnit, usageQty, usageSource, usageErr := capabilitySyncUsage(m, priceData, result.Raw, result.Headers)
 	if usageErr != nil {
-		refundCapabilityBilling(c, info)
-		logCapabilityConsume(c, m, info, 0, "failed", usageErr.Code, usageErr.LogCode, result.UpstreamRequestID, usageUnit, 0, "sync", usageSource)
-		respondCapabilityError(c, usageErr)
+		usageErr.ResponseReceived = true
+		usageErr.RequestWritten = true
+		usageErr.MayHaveCharged = true
+		usageErr.UpstreamStatus = result.HTTPStatus
+		usageErr.BillingHeaders = result.Headers
+		usageErr.BillingRaw = result.Raw
+		usageErr.UpstreamRequestID = result.UpstreamRequestID
+		quota, unit, quantity, settledSource, settleFailed := settleCapabilityExecutionFailure(c, m, info, priceData, usageErr)
+		status := "failed"
+		if settleFailed {
+			status = "billing_failed"
+		} else if capabilityClientGone(c) {
+			status = "client_gone"
+		}
+		logCapabilityConsume(c, m, info, quota, status, usageErr.Code, usageErr.LogCode, usageErr.UpstreamRequestID, unit, quantity, "sync", settledSource)
+		respondCapabilityErrorUnlessGone(c, usageErr)
 		return
 	}
-	if err := service.SettleBilling(c, info, actualQuota); err != nil {
-		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", "billing_settle_failed", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
-		respondCapabilityError(c, &capability.ExecutionError{
-			Code:       "billing_failed",
-			Message:    "billing settlement failed",
-			HTTPStatus: http.StatusInternalServerError,
-		})
+	if err := settleCapabilityBillingWithRetry(c, info, actualQuota); err != nil {
+		billingErr := &capability.ExecutionError{
+			Code:              "billing_failed",
+			Message:           "billing settlement failed; the upstream call may have been billed",
+			HTTPStatus:        http.StatusInternalServerError,
+			UpstreamRequestID: result.UpstreamRequestID,
+			CostUSD:           quotaToUSD(actualQuota),
+			Billed:            true,
+			UsageSource:       usageSource,
+		}
+		logCapabilityConsume(c, m, info, actualQuota, "billing_failed", billingErr.Code, "billing_settle_failed", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
+		common.SysError(fmt.Sprintf("ERROR capability billing settlement failed after retries: capability=%s upstream_request_id=%s quota=%d usage_source=%s error=%v",
+			m.ID, result.UpstreamRequestID, actualQuota, usageSource, err))
+		respondCapabilityErrorUnlessGone(c, billingErr)
 		return
 	}
 
-	logCapabilityConsume(c, m, info, actualQuota, "succeeded", "", "", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
+	status := "succeeded"
+	if capabilityClientGone(c) {
+		status = "client_gone"
+	}
+	logCapabilityConsume(c, m, info, actualQuota, status, "", "", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
+	if capabilityClientGone(c) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success":             true,
 		"id":                  info.RequestId,
@@ -194,7 +231,7 @@ func SubmitCapabilityTask(c *gin.Context) {
 				})
 				return
 			}
-			c.JSON(http.StatusOK, capabilityTaskPayload(task, true))
+			respondCapabilityJSONUnlessGone(c, http.StatusOK, capabilityTaskPayload(task, true))
 			return
 		}
 		claim = row
@@ -207,26 +244,42 @@ func SubmitCapabilityTask(c *gin.Context) {
 		return
 	}
 
-	submit, execErr := capability.SubmitAsync(c.Request.Context(), m, req.Input, req.IdempotencyKey)
+	operationCtx, cancel := capability.OperationContext(c.Request.Context(), m)
+	defer cancel()
+	submit, execErr := capability.SubmitAsync(operationCtx, m, req.Input, req.IdempotencyKey)
 	if execErr != nil {
-		refundCapabilityBilling(c, info)
-		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, execErr.LogCode, "", "call", 0, "async", "")
-		respondCapabilityError(c, execErr)
+		quota, unit, quantity, usageSource, settleFailed := settleCapabilityExecutionFailure(c, m, info, priceData, execErr)
+		if !execErr.RequestWritten || !execErr.MayHaveCharged {
+			dropCapabilityClaim(userId, m.ID, keyHash, claim)
+		}
+		status := "failed"
+		if settleFailed {
+			status = "billing_failed"
+		} else if capabilityClientGone(c) {
+			status = "client_gone"
+		}
+		logCapabilityConsume(c, m, info, quota, status, execErr.Code, execErr.LogCode, execErr.UpstreamRequestID, unit, quantity, "async", usageSource)
+		respondCapabilityErrorUnlessGone(c, execErr)
 		return
 	}
 
 	// Fixed per-call async tasks are charged at submit. The pilot price is zero;
 	// per-unit async settlement will be added with the full task lifecycle.
-	if err := service.SettleBilling(c, info, priceData.Quota); err != nil {
-		refundCapabilityBilling(c, info)
-		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", "billing_settle_failed", submit.UpstreamRequestID, "call", 0, "async", "")
-		respondCapabilityError(c, &capability.ExecutionError{
-			Code:       "billing_failed",
-			Message:    "billing settlement failed",
-			HTTPStatus: http.StatusInternalServerError,
-		})
+	if err := settleCapabilityBillingWithRetry(c, info, priceData.Quota); err != nil {
+		unit, quantity := capabilityEstimatedUsage(m, req.Input)
+		billingErr := &capability.ExecutionError{
+			Code:              "billing_failed",
+			Message:           "billing settlement failed; the upstream task may have been accepted",
+			HTTPStatus:        http.StatusInternalServerError,
+			UpstreamRequestID: submit.UpstreamRequestID,
+			CostUSD:           quotaToUSD(priceData.Quota),
+			Billed:            true,
+			UsageSource:       "estimated",
+		}
+		logCapabilityConsume(c, m, info, priceData.Quota, "billing_failed", billingErr.Code, "billing_settle_failed", submit.UpstreamRequestID, unit, quantity, "async", "estimated")
+		common.SysError(fmt.Sprintf("ERROR capability async billing settlement failed after retries: capability=%s upstream_request_id=%s quota=%d error=%v",
+			m.ID, submit.UpstreamRequestID, priceData.Quota, err))
+		respondCapabilityErrorUnlessGone(c, billingErr)
 		return
 	}
 
@@ -262,14 +315,22 @@ func SubmitCapabilityTask(c *gin.Context) {
 		},
 	})
 	if err := model.DB.Create(task).Error; err != nil {
-		refundCapabilityBilling(c, info)
-		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", "task_persist_failed", "", submit.UpstreamRequestID, "call", 0, "async", "")
-		respondCapabilityError(c, &capability.ExecutionError{
-			Code:       "task_persist_failed",
-			Message:    "could not persist task",
-			HTTPStatus: http.StatusInternalServerError,
-		})
+		unit, quantity := capabilityEstimatedUsage(m, req.Input)
+		persistErr := &capability.ExecutionError{
+			Code:              "task_persist_failed",
+			Message:           "the upstream task was accepted but could not be stored locally",
+			HTTPStatus:        http.StatusInternalServerError,
+			UpstreamRequestID: submit.UpstreamRequestID,
+			CostUSD:           quotaToUSD(priceData.Quota),
+			Billed:            true,
+			UsageSource:       "estimated",
+		}
+		status := "failed"
+		if capabilityClientGone(c) {
+			status = "client_gone"
+		}
+		logCapabilityConsume(c, m, info, priceData.Quota, status, persistErr.Code, "", submit.UpstreamRequestID, unit, quantity, "async", "estimated")
+		respondCapabilityErrorUnlessGone(c, persistErr)
 		return
 	}
 	if claim != nil {
@@ -279,8 +340,15 @@ func SubmitCapabilityTask(c *gin.Context) {
 		}
 	}
 	logUnit, logQuantity := capabilityEstimatedUsage(m, req.Input)
-	logCapabilityConsume(c, m, info, priceData.Quota, "submitted", "", "", submit.UpstreamRequestID, logUnit, logQuantity, "async", "")
-	c.JSON(http.StatusAccepted, gin.H{
+	status := "submitted"
+	if capabilityClientGone(c) {
+		status = "client_gone"
+	}
+	logCapabilityConsume(c, m, info, priceData.Quota, status, "", "", submit.UpstreamRequestID, logUnit, logQuantity, "async", "estimated")
+	if capabilityClientGone(c) {
+		return
+	}
+	respondCapabilityJSONUnlessGone(c, http.StatusAccepted, gin.H{
 		"success": true,
 		"id":      task.TaskID,
 		"status":  "queued",
@@ -307,7 +375,7 @@ func GetCapabilityTask(c *gin.Context) {
 		return
 	}
 	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
-		c.JSON(http.StatusOK, capabilityTaskPayload(task, false))
+		respondCapabilityJSONUnlessGone(c, http.StatusOK, capabilityTaskPayload(task, false))
 		return
 	}
 
@@ -327,9 +395,16 @@ func GetCapabilityTask(c *gin.Context) {
 	if upstreamID == "" {
 		upstreamID = task.TaskID
 	}
-	poll, execErr := capability.PollAsync(c.Request.Context(), m, data.Input, upstreamID)
+	operationCtx, cancel := capability.OperationContext(c.Request.Context(), m)
+	defer cancel()
+	poll, execErr := capability.PollAsync(operationCtx, m, data.Input, upstreamID)
 	if execErr != nil {
-		respondCapabilityError(c, execErr)
+		if execErr.MayHaveCharged || execErr.RequestWritten {
+			execErr.CostUSD = quotaToUSD(task.Quota)
+			execErr.Billed = task.Quota > 0
+			execErr.UsageSource = "reserve_fallback"
+		}
+		respondCapabilityErrorUnlessGone(c, execErr)
 		return
 	}
 	if poll.Completed {
@@ -342,7 +417,7 @@ func GetCapabilityTask(c *gin.Context) {
 			data.Billing.Settled = true
 			task.SetData(map[string]any{"input": data.Input, "billing": data.Billing})
 			_ = model.DB.Save(task).Error
-			c.JSON(http.StatusOK, capabilityTaskPayload(task, false))
+			respondCapabilityJSONUnlessGone(c, http.StatusOK, capabilityTaskPayload(task, false))
 			return
 		}
 		task.Status = model.TaskStatusSuccess
@@ -355,12 +430,14 @@ func GetCapabilityTask(c *gin.Context) {
 			actualQuota, _, _, _, usageErr := capabilitySyncUsage(m, priceData, poll.Raw, nil)
 			if usageErr != nil {
 				task.Status = model.TaskStatusFailure
-				task.FailReason = "missing usage"
-				refundCapabilityTask(task)
+				task.FailReason = "upstream usage is unknown"
 				data.Billing.Settled = true
 				task.SetData(map[string]any{"input": data.Input, "billing": data.Billing})
 				_ = model.DB.Save(task).Error
-				c.JSON(http.StatusOK, capabilityTaskPayload(task, false))
+				if capabilityClientGone(c) {
+					return
+				}
+				respondCapabilityJSONUnlessGone(c, http.StatusOK, capabilityTaskPayload(task, false))
 				return
 			}
 			settleCapabilityTaskDelta(task, task.Quota, actualQuota)
@@ -369,14 +446,14 @@ func GetCapabilityTask(c *gin.Context) {
 		data.Billing.Settled = true
 		task.SetData(map[string]any{"input": data.Input, "output": poll.Result, "billing": data.Billing})
 		_ = model.DB.Save(task).Error
-		c.JSON(http.StatusOK, capabilityTaskPayload(task, false))
+		respondCapabilityJSONUnlessGone(c, http.StatusOK, capabilityTaskPayload(task, false))
 		return
 	}
 
 	task.Status = model.TaskStatusInProgress
 	task.Progress = "50%"
 	_ = model.DB.Save(task).Error
-	c.JSON(http.StatusOK, gin.H{
+	respondCapabilityJSONUnlessGone(c, http.StatusOK, gin.H{
 		"success":         true,
 		"id":              task.TaskID,
 		"status":          "running",
@@ -419,7 +496,9 @@ func GetCapabilityTaskContent(c *gin.Context) {
 	if upstreamID == "" {
 		upstreamID = task.TaskID
 	}
-	raw, contentType, execErr := capability.FetchContent(c.Request.Context(), m, data.Input, upstreamID)
+	operationCtx, cancel := capability.OperationContext(c.Request.Context(), m)
+	defer cancel()
+	raw, contentType, execErr := capability.FetchContent(operationCtx, m, data.Input, upstreamID)
 	if execErr != nil {
 		respondCapabilityError(c, execErr)
 		return
@@ -529,6 +608,125 @@ func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw
 	}
 	quota := quantityToQuota(m.Billing.PriceUSD, quantity, priceData.GroupRatioInfo.GroupRatio)
 	return quota, unit, quantity, "response_body", nil
+}
+
+func settleCapabilityExecutionFailure(
+	c *gin.Context,
+	m *capability.Manifest,
+	info *relaycommon.RelayInfo,
+	priceData *types.PriceData,
+	execErr *capability.ExecutionError,
+) (quota int, unit string, quantity float64, usageSource string, settleFailed bool) {
+	unit = m.Billing.Unit
+	if unit == "" {
+		if m.Billing.Type == capability.BillingPerCall {
+			unit = "call"
+		} else {
+			unit = "unit"
+		}
+	}
+	receivedSuccess := execErr != nil &&
+		execErr.ResponseReceived &&
+		execErr.UpstreamStatus >= http.StatusOK &&
+		execErr.UpstreamStatus < http.StatusMultipleChoices &&
+		execErr.MayHaveCharged
+	requestUncertain := execErr != nil &&
+		execErr.RequestWritten &&
+		!execErr.ResponseReceived &&
+		execErr.MayHaveCharged
+	if m.Billing.Type != capability.BillingPerUnit || (!receivedSuccess && !requestUncertain) {
+		refundCapabilityBilling(c, info)
+		return 0, unit, 0, "", false
+	}
+
+	if receivedSuccess {
+		var usedQuota int
+		var usedQuantity float64
+		usedQuota, usedUnit, usedQuantity, source, usageErr := capabilitySyncUsage(m, priceData, execErr.BillingRaw, execErr.BillingHeaders)
+		if usageErr == nil {
+			quota = usedQuota
+			unit = usedUnit
+			quantity = usedQuantity
+			usageSource = source
+		} else {
+			quota = usdToQuota(m.Billing.ReserveUSD, priceData.GroupRatioInfo.GroupRatio)
+			usageSource = "reserve_fallback"
+			if quota <= 0 {
+				quota = priceData.Quota
+			}
+			quantity = capabilityQuotaQuantity(m, priceData, quota)
+		}
+	} else {
+		quota = usdToQuota(m.Billing.ReserveUSD, priceData.GroupRatioInfo.GroupRatio)
+		usageSource = "uncertain_reserve"
+		if quota <= 0 {
+			quota = priceData.Quota
+		}
+	}
+	if quantity == 0 {
+		quantity = capabilityQuotaQuantity(m, priceData, quota)
+	}
+
+	if err := settleCapabilityBillingWithRetry(c, info, quota); err != nil {
+		common.SysError(fmt.Sprintf("ERROR capability billing settlement failed after retries: capability=%s upstream_request_id=%s quota=%d usage_source=%s error=%v",
+			m.ID, execErr.UpstreamRequestID, quota, usageSource, err))
+		execErr.Code = "billing_failed"
+		execErr.Message = "billing settlement failed; the upstream call may have been billed"
+		execErr.HTTPStatus = http.StatusInternalServerError
+		execErr.LogCode = "billing_settle_failed"
+		execErr.CostUSD = quotaToUSD(quota)
+		execErr.Billed = true
+		execErr.UsageSource = usageSource
+		return quota, unit, quantity, usageSource, true
+	}
+	execErr.CostUSD = quotaToUSD(quota)
+	execErr.Billed = true
+	execErr.UsageSource = usageSource
+	return quota, unit, quantity, usageSource, false
+}
+
+func capabilityQuotaQuantity(m *capability.Manifest, priceData *types.PriceData, quota int) float64 {
+	if quota <= 0 || m == nil || priceData == nil {
+		return 0
+	}
+	denominator := m.Billing.PriceUSD * float64(common.QuotaPerUnit) * priceData.GroupRatioInfo.GroupRatio
+	if denominator <= 0 {
+		return 0
+	}
+	return float64(quota) / denominator
+}
+
+func settleCapabilityBillingWithRetry(c *gin.Context, info *relaycommon.RelayInfo, quota int) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := settleCapabilityBillingRequest(c, info, quota); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
+		}
+	}
+	return lastErr
+}
+
+func capabilityClientGone(c *gin.Context) bool {
+	return c != nil && c.Request != nil && c.Request.Context().Err() != nil
+}
+
+func respondCapabilityErrorUnlessGone(c *gin.Context, err *capability.ExecutionError) {
+	if capabilityClientGone(c) {
+		return
+	}
+	respondCapabilityError(c, err)
+}
+
+func respondCapabilityJSONUnlessGone(c *gin.Context, status int, payload any) {
+	if capabilityClientGone(c) {
+		return
+	}
+	c.JSON(status, payload)
 }
 
 func usdToQuota(amountUSD float64, groupRatio float64) int {
@@ -695,11 +893,18 @@ func respondCapabilityError(c *gin.Context, err *capability.ExecutionError) {
 	if status < 400 || status > 599 {
 		status = http.StatusBadGateway
 	}
-	c.JSON(status, gin.H{
+	payload := gin.H{
 		"success":    false,
 		"error_code": err.Code,
 		"message":    err.Message,
-	})
+	}
+	if err.Billed {
+		payload["cost_usd"] = err.CostUSD
+		if err.UsageSource != "" {
+			payload["usage_source"] = err.UsageSource
+		}
+	}
+	c.JSON(status, payload)
 }
 
 func hashCapabilityKey(key string) string {

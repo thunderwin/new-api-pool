@@ -13,6 +13,23 @@
 
 ---
 
+## v0.6.6 — Capability 付费失败与每日对账（2026-10-29）
+
+| 类型 | 变更 |
+|---|---|
+| `🐛` | 同步、异步提交、轮询和内容下载不再随调用方断开取消付费上游请求；调用方断开后仍结算并写 `client_gone` 消费日志 |
+| `🐛` | Manifest timeout 改为一次调用的整体预算，覆盖所有重试和退避 |
+| `🐛` | 传输错误仅在 `httptrace.WroteRequest` 确认请求未写出时重试；已写出后一律不重试 |
+| `🐛` | 按用量能力收到 2xx 后，即使读正文、大小限制、JSON、success 条件、输出字段或计量处理失败，也按成本头或 reserve 结算；错误响应带 `cost_usd` 和 `usage_source` |
+| `+` | 请求已写出但结果未知的新错误：`504 upstream_timeout`、`502 upstream_request_uncertain`；按用量能力以 `uncertain_reserve` 结算 |
+| `🐛` | `SettleBilling` 最多重试 3 次；最终失败保留预扣，消费日志记 `billing_failed`、应收 quota 和上游 request id，并写 ERROR 日志 |
+| `+` | AISA 每日 UTC 对账：比较 `/v1/usage` 的 `charged_micros_usd` 与日志 `usage_quantity`，差额超过 `max($0.05, 2%)` 时 WARN 并通知 root |
+| `+` | `ops/reconcile-capability-aisa.py` 支持在服务器容器内手动补跑历史日期，不读取或打印密钥/数据库连接串 |
+| `*` | 文档补充失败计费表、`usage_source`、错误 `cost_usd`、对账运行方式；`per_call` 保持原退款语义并记录残余风险 |
+| `+` | 离线测试覆盖断开后结算、整体 deadline、已写出超时不重试、未写出重试后退款、2xx 后处理失败、4xx/5xx 退款、结算失败、异步提交和 `per_call` 回归 |
+
+---
+
 ## v0.6.5 — AISA 搜索与 SEO Capability（2026-10-29）
 
 | 类型 | 变更 |
