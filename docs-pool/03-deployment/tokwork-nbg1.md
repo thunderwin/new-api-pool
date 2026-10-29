@@ -392,6 +392,29 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | AISA 余额 | 验证后 `$0.944000` → `$0.907844`，余 `$0.907844` |
 | 回滚 | 未触发 |
 
+#### 2026-10-29 发布 Capability 失败计费与每日对账
+
+> 以下为已核实事实。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `786bcd74` |
+| 二进制 SHA-256 | `0f6d97c4bd2f1182449ef72c7ad7df6d589dfcb7711e2b36098b241d40871452` |
+| 容器内 `/new-api` SHA-256 | 与主机二进制相同 |
+| 备份 | `new-api.bak-20261029-132648`、`docker-compose.yml.bak-20261029-132648`、`.env.bak-20261029-132648` |
+| 中断 | 从重建容器到 `/api/status` 恢复约 8 秒 |
+| 健康 | `/api/status` 200；`new-api-app` healthy |
+| 密钥 | AISA、Bright Data key 与 zone 均“已设置”，未读取或输出值 |
+| 能力目录 | 19 个；`web-unlock-v1` 仍登记 |
+| 免费回归 | `/v1/models` 200（42 个）；`weather-v1` 200；`web-unlock-v1` 非白名单 URL 返回 `400 invalid_request`，未调用上游 |
+| 正常付费验证 | `domain-rank-overview-v1` 200，`cost_usd=$0.012120`，日志成本 12,120 微美元，用户与 AISA 余额均减少 12,120 微美元 |
+| 断开验证 | `page-seo-audit-v1` 客户端 1 秒断开；后台继续完成，日志 `client_gone`、成本 150 微美元，用户与 AISA 余额均减少 150 微美元 |
+| 付费合计 | `$0.012270`，低于 $0.06 预算 |
+| AISA 余额 | `$0.713672 → $0.701402` |
+| 每日对账 | 10-29 上游 `$0.242598`，日志 `$0.242598`，差额 `$0.000000` |
+| 对账脚本 | `reconcile-capability-aisa.py` 已上传到 `/opt/new-api-pool/`；API 进程另有每日自动任务 |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。

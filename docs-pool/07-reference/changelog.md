@@ -28,6 +28,22 @@
 | `*` | 文档补充失败计费表、`usage_source`、错误 `cost_usd`、对账运行方式；`per_call` 保持原退款语义并记录残余风险 |
 | `+` | 离线测试覆盖断开后结算、整体 deadline、已写出超时不重试、未写出重试后退款、2xx 后处理失败、4xx/5xx 退款、结算失败、异步提交和 `per_call` 回归 |
 
+### 线上验证
+
+- 发布提交 `786bcd74`；容器 healthy，二进制 SHA-256 为
+  `0f6d97c4bd2f1182449ef72c7ad7df6d589dfcb7711e2b36098b241d40871452`
+- 发布重建期间应用短暂中断约 8 秒
+- 免费回归：模型目录 42 个、能力目录 19 个；`weather-v1` 成功；
+  `web-unlock-v1` 非白名单 URL 在调用上游前返回 `400 invalid_request`
+- 正常付费调用 `domain-rank-overview-v1`：响应 `cost_usd=$0.012120`，
+  日志 `usage_quantity=12120`、`usage_source=response_header`，用户余额与 AISA 余额均减少
+  12,120 微美元
+- 断开验证 `page-seo-audit-v1`：客户端 1 秒超时，日志
+  `status=client_gone`、`usage_quantity=150`、`usage_source=response_header`；
+  用户余额和 AISA 余额均减少 150 微美元
+- 两笔付费验证合计 `$0.012270`；AISA 余额 `$0.713672 → $0.701402`
+- 2026-10-29 对账：上游 `$0.242598`，日志 `$0.242598`，差额 `$0.000000`
+
 ---
 
 ## v0.6.5 — AISA 搜索与 SEO Capability（2026-10-29）
