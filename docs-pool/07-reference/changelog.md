@@ -34,6 +34,13 @@
 - `site-referrals-v1` 默认 5 条预估 `$1.50`；20 条原预估 `$6.00`，因此降低默认条数
 - `similar-sites-v1` 默认 2 条预估 `$0.75`
 
+### 线上验证
+
+- 发布提交 `832ae787`；容器 healthy；能力目录 19 个，其中 AISA 16 个
+- 原有模型目录 42 个、免费 `weather-v1` 均正常；`web-unlock-v1` 仍登记
+- 真实付费只调用 `domain-rank-overview-v1` 与 `backlinks-summary-v1` 各一次；合计 `$0.036156`
+- 两笔均按响应头成本结算，AISA 余额 `$0.944000 → $0.907844`
+
 ---
 
 ## v0.6.4 — Bright Data 网页抓取 Capability（2026-10-23）

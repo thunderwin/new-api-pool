@@ -185,6 +185,11 @@ Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上�
 `site-referrals-v1` 原计划默认 20 条报价 `$6.00`，受单次上限约束改为默认 5；
 `similar-sites-v1` 默认从 5 调为 2，使报价从 `$1.875` 降到 `$0.75`。
 
+2026-10-29 发布后线上只对 DataForSEO 做了两笔真实付费 smoke：
+`domain-rank-overview-v1` 与 `backlinks-summary-v1`（目标 `wikipedia.org`）均为 200，
+实际分别产生 12,120 / 24,036 微美元上游成本；`cost_usd`、消费日志和余额变化一致。
+AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做付费调用。
+
 ## 计费
 
 - Manifest 的 `billing.price_usd` 是唯一价格来源，不读硬编码。

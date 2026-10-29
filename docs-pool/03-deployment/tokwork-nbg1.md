@@ -214,7 +214,7 @@ Capability 凭证值只写进服务器 `.env`：
 |---|---|---|
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
-| `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 已设置；容器在重建后读取） | **是** |
+| `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 与重建后的容器内均已设置） | **是** |
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
@@ -370,6 +370,27 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | Premium domains | 维护者已开启，zone 计划显示 `ub_premium: 1`；开启后约 3 分钟才生效，期间仍返回 `premium` 错误 |
 | Wayfair（开启后） | 服务器直连抓 `https://www.wayfair.com/`：目标状态 200，正文约 960 KB，标题为 Wayfair 首页 |
 | 结论 | Bright Data 侧已可用。经 New API `web-unlock-v1` 和 ericBot 网关的端到端调用尚待一次实际使用验证 |
+
+#### 2026-10-29 发布 AISA 搜索/SEO 能力
+
+> 以下为已核实事实。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `832ae787` |
+| 二进制 SHA-256 | `c57cc34203e0b6f4ea2e6c660ebb491c8c5d3e7ed22c0287f82f0fa84bd983df` |
+| 容器内 `/new-api` SHA-256 | 与主机二进制相同 |
+| 备份 | `new-api.bak-20261029-110456`、`docker-compose.yml.bak-20261029-110456`、`.env.bak-20261029-110456` |
+| 中断 | 应用启动 2.386 秒；容器启动后约 3 秒 `/api/status` 恢复 200 |
+| 健康 | `/api/status` 200；`new-api-app` healthy |
+| 密钥 | `.env` 与容器内 `CAPABILITY_AISA_API_KEY` 均为“已设置”；文件日志和容器日志扫描均未出现完整值 |
+| 能力目录 | 19 个；其中 AISA 16 个；16 个 per-unit 条目均返回 `max_usd`；`web-unlock-v1` 仍在目录中 |
+| 免费回归 | `/v1/models` 200、42 个模型；`weather-v1` 200 |
+| AISA quote | 16 个默认请求全部 200；默认预估合计 `$3.625236` |
+| AISA 付费验证 | 只调用 `domain-rank-overview-v1`、`backlinks-summary-v1` 各一次，均 200；实际合计 `$0.036156` |
+| 计费核对 | 两次均 `usage_source=response_header`；用户逻辑余额与消费日志均扣 18,078 quota；AISA 余额从 `$0.944000` 降至 `$0.907844` |
+| AISA 余额 | 验证后 `$0.944000` → `$0.907844`，余 `$0.907844` |
+| 回滚 | 未触发 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
