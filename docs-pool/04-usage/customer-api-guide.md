@@ -3,7 +3,7 @@
 > **读者**：调用 TokWork 网关的开发者 / 集成方。本文可以直接发给客户。
 > **内容**：怎么拿 Key、怎么鉴权、怎么用 OpenAI / Anthropic / Gemini 三种格式调用大模型、
 > 怎么调用第三方 API（Capability）、怎么计费、出错怎么办。
-> **最后核实**：2026-10-23。维护者请先看文末「维护者备注」。
+> **最后核实**：2026-10-29。维护者请先看文末「维护者备注」。
 
 ---
 
@@ -298,13 +298,43 @@ curl https://api.tokwork.com/v1/capabilities \
 - `mode`：`sync`（同步，一次请求拿结果）或 `async`（异步，提交后轮询）。**调用方式由它决定**。
 - `billing`：计费方式与单价（美元）。
 
-当前已上线（2026-10-23）：
+当前已上线（2026-10-29）：
 
 | ID | 模式 | 输入 | 输出 | 单价 |
 |---|---|---|---|---|
 | `weather-v1` | 同步 | **必填** `latitude`、`longitude`；可选 `current`、`timezone` | `time`、`temperature_2m`、`wind_speed_10m` | 免费 |
 | `ssl-analyze-v1` | 异步 | `host`（域名） | 各 endpoint 的 TLS 评级详情 | 免费 |
 | `web-unlock-v1` | 同步 | **必填** `url`；仅限 Wayfair 四个主域名及子域名的 HTTPS 页面 | `status`、`html` | $0.003 / 次 |
+
+搜索与 SEO 能力（AISA，按上游实际用量结算）：
+
+| ID | 用途 | 关键输入 | 单次上限 |
+|---|---|---|---|
+| `site-traffic-snapshot-v1` | Similarweb 流量快照 | `domain`，可选 `month` | $0.60 |
+| `site-traffic-trend-v1` | 月度流量趋势 | `domain`、`start_date`、`end_date`、`metrics` | $1.00 |
+| `traffic-channels-v1` | 营销渠道来源 | `domain`、日期范围 | $1.05 |
+| `site-referrals-v1` | 引荐网站 | `domain`、日期范围、`limit`（默认 5，最大 20） | $1.50 |
+| `similar-sites-v1` | 相似网站 | `domain`、日期范围、`limit`（默认 2） | $0.75 |
+| `backlinks-summary-v1` | 外链汇总 | `target` | $0.10 |
+| `referring-domains-v1` | 引荐域名 | `target`、可选 `limit` | $0.10 |
+| `backlink-anchors-v1` | 锚文本 | `target`、可选 `limit` | $0.10 |
+| `backlink-competitors-v1` | 外链竞品 | `target`、可选 `limit` | $0.10 |
+| `domain-rank-overview-v1` | 域名排名概览 | `target`、地区、语言 | $0.05 |
+| `organic-competitors-v1` | 自然搜索竞品 | `target`、地区、语言、`limit` | $0.10 |
+| `ranked-keywords-v1` | 排名关键词 | `target`、地区、语言、`limit` | $0.30 |
+| `keyword-gap-v1` | 关键词差距 | `target1`、`target2` | $0.10 |
+| `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth` | $0.05 |
+| `ai-brand-mentions-v1` | AI 品牌露出 | `target` 数组对象 | $0.20 |
+| `page-seo-audit-v1` | 单页 SEO 审计 | `url` | $0.03 |
+
+地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
+`ai-brand-mentions-v1` 的 target 必须写成数组对象，例如：
+
+```json
+{ "target": [{ "domain": "example.com" }] }
+```
+
+也可以用 `{ "keyword": "brand name" }`。不要传裸字符串或字符串数组。
 
 ### 5.2 同步调用 —— `POST /v1/capabilities/{id}`
 
@@ -363,6 +393,21 @@ curl https://api.tokwork.com/v1/capabilities/web-unlock-v1 \
 - `html` 最大 8 MiB，单次超时 90 秒。
 - 只有目标页 HTTP `200` 且正文非空才计费；Bright Data 错误、目标非 200、空正文都自动退款。
 
+**外链汇总示例**（`backlinks-summary-v1`）：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/backlinks-summary-v1 \
+  -H "Authorization: Bearer $TOKWORK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": { "target": "example.com" },
+    "idempotency_key": "backlinks-example-20261029"
+  }'
+```
+
+DataForSEO 类能力的 `output.result` 是上游 `tasks[0].result`；Similarweb 类能力
+返回 `output.meta` 和 `output.data`。
+
 ### 5.3 异步调用 —— `POST /v1/tasks` + `GET /v1/tasks/{id}`
 
 **提交**（返回 `202`）：
@@ -399,7 +444,8 @@ curl https://api.tokwork.com/v1/tasks/task_... \
 - **幂等**：带 `idempotency_key` 提交时，同一账户、同一能力、同一个 key 重复提交只会创建一个任务；
   重复提交返回同一个任务 id 并带 `"replayed": true`。如果前一次提交还没拿到任务 id，
   返回 `409 task_in_progress`，稍后重试即可。网络超时后重试提交时，**务必带上同一个 key**，
-  以免重复扣费。（幂等目前只对异步任务生效。）
+  以免重复扣费。同步 Similarweb 能力会把 `idempotency_key` 转成上游
+  `Idempotency-Key`；上游重复 key 返回 409，不会重放旧结果。
 
 ### 5.4 Capability 的错误格式
 
@@ -416,10 +462,13 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 | 404 | `capability_not_found` | 能力 ID 不存在，或同步/异步用错了入口 |
 | 404 | `task_not_found` | 任务不存在或不属于你 |
 | 409 | `task_in_progress` | 同一幂等 key 的提交正在进行 |
+| 422 | `cost_cap_exceeded` | 上游预估超过单次成本上限；减少月份、指标或条数后重试；未调用上游、未扣费 |
 | 500 | `credential_error` | 运营方尚未配置上游凭证；未扣费 |
 | 502 | `upstream_http_<状态码>`、`upstream_unreachable`、`invalid_upstream_json`、`upstream_response_too_large` 等 | 第三方供应商出错；已预扣的费用会退回 |
 | 502 | `upstream_target_status` | 目标网页不是 HTTP 200；已退款，不返回网页正文 |
 | 502 | `upstream_empty_body` | 目标网页正文为空；已退款 |
+| 503 | `upstream_unavailable` | 第三方或运营方上游暂时不可用；已退款。AISA 余额不足也是这个公共错误 |
+| 429 | `upstream_rate_limited` | 上游限流；按提示稍后重试 |
 
 > Key 无效时仍返回 §2 那种 `401` 格式。
 
@@ -456,8 +505,17 @@ token 数以响应里的 `usage` 为准（流式请带 `stream_options.include_u
 ### 6.3 按次计费
 
 - **图片模型**：按张计费，`/api/pricing` 中 `quota_type = 1`，单价即 `model_price`（美元 / 张）。
-- **Capability**：按 `GET /v1/capabilities` 里的 `billing.price_usd` 计费；`price_usd = 0` 的能力免费，
-  余额为 0 也能调用。
+- **Capability**：按 `GET /v1/capabilities` 里的 `billing` 计费；`price_usd = 0` 的能力免费，
+  余额为 0 也能调用。AISA 搜索/SEO 能力的 `unit` 是 `micro_usd`：
+
+```text
+cost_usd = price_usd × quantity × GroupRatio
+```
+
+其中 `quantity` 是上游成功响应头里的实际微美元成本。当前
+`price_usd=0.000001`，即 1 倍成本价。`billing.max_usd` 是单次准入上限；
+它只阻止预估过高的请求，不保证最终扣费绝不超过该数字。成功但响应缺少成本头时，
+平台按 `max_usd` 结算，并在内部消费日志标记 `reserve_fallback`；不会不扣费。
 
 ### 6.4 价格快照（2026-10-23，仅供参考）
 

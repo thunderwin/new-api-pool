@@ -2,6 +2,7 @@ package controller
 
 import (
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -699,5 +700,229 @@ func TestWebUnlockBusinessFailuresRefund(t *testing.T) {
 			}
 			waitForCapabilityQuota(t, db, user.Id, originalQuota)
 		})
+	}
+}
+
+func newHeaderBillingTestManifest(endpoint string) *capability.Manifest {
+	return &capability.Manifest{
+		ID:       "header-billing-test-v1",
+		Provider: "aisa",
+		Mode:     capability.ModeSync,
+		Endpoint: endpoint,
+		Method:   http.MethodGet,
+		Response: &capability.ResponseSpec{
+			Output: map[string]string{"ok": "$.ok"},
+		},
+		Billing: capability.BillingSpec{
+			Type:           capability.BillingPerUnit,
+			Unit:           "micro_usd",
+			PriceUSD:       0.000001,
+			QuantityHeader: "X-AISA-Customer-Cost-Micros-USD",
+			ReserveUSD:     0.10,
+		},
+		Limits: capability.LimitsSpec{Timeout: "5s", MaxResponseBytes: 4096},
+		Retry:  capability.RetrySpec{Attempts: 1, RetryOn: []int{429, 503}},
+	}
+}
+
+func executeHeaderBillingCapability(t *testing.T, manifest *capability.Manifest) (*httptest.ResponseRecorder, *model.User, *gorm.DB) {
+	t.Helper()
+	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+	oldLogConsume := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() { common.LogConsumeEnabled = oldLogConsume })
+	db := setupCapabilityControllerTestDB(t)
+	user, token := seedCapabilityUserAndToken(t, db)
+	registerWebUnlockTestManifest(t, manifest)
+	ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{"input": map[string]any{}}, user, token)
+	ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+	ExecuteCapability(ctx)
+	return recorder, user, db
+}
+
+func latestCapabilityLog(t *testing.T, db *gorm.DB, capabilityID string) model.Log {
+	t.Helper()
+	var log model.Log
+	if err := db.Where("model_name = ?", capabilityID).Order("id DESC").First(&log).Error; err != nil {
+		t.Fatalf("load capability log: %v", err)
+	}
+	return log
+}
+
+func TestHeaderBillingSettlesActualMicroUSD(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-AISA-Customer-Cost-Micros-USD", "12345")
+		_, _ = w.Write([]byte(`{"ok":true,"secret_body":"do-not-log"}`))
+	}))
+	defer upstream.Close()
+
+	manifest := newHeaderBillingTestManifest(upstream.URL)
+	recorder, user, db := executeHeaderBillingCapability(t, manifest)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected response: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var fresh model.User
+	if err := db.First(&fresh, user.Id).Error; err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	expectedQuota := user.Quota - int(math.Round(12345*0.000001*common.QuotaPerUnit))
+	if fresh.Quota != expectedQuota {
+		t.Fatalf("expected quota %d from response header, got %d", expectedQuota, fresh.Quota)
+	}
+	log := latestCapabilityLog(t, db, manifest.ID)
+	var other map[string]any
+	if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+		t.Fatalf("decode log fields: %v", err)
+	}
+	if other["usage_source"] != "response_header" || other["usage_quantity"] != float64(12345) {
+		t.Fatalf("unexpected usage log fields: %#v", other)
+	}
+	if strings.Contains(log.Other, "do-not-log") || strings.Contains(log.Other, "Authorization") {
+		t.Fatalf("sensitive request or response data leaked into log: %s", log.Other)
+	}
+}
+
+func TestHeaderBillingMissingAndInvalidHeaderUseReserveFallback(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		header string
+	}{
+		{name: "missing"},
+		{name: "invalid", header: "not-a-number"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if test.header != "" {
+					w.Header().Set("X-AISA-Customer-Cost-Micros-USD", test.header)
+				}
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer upstream.Close()
+
+			manifest := newHeaderBillingTestManifest(upstream.URL)
+			recorder, user, db := executeHeaderBillingCapability(t, manifest)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("reserve fallback must succeed: code=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			var fresh model.User
+			if err := db.First(&fresh, user.Id).Error; err != nil {
+				t.Fatalf("load user: %v", err)
+			}
+			expectedQuota := user.Quota - int(math.Round(0.10*common.QuotaPerUnit))
+			if fresh.Quota != expectedQuota {
+				t.Fatalf("expected reserve charge %d, got %d", expectedQuota, fresh.Quota)
+			}
+			log := latestCapabilityLog(t, db, manifest.ID)
+			var other map[string]any
+			if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+				t.Fatalf("decode log fields: %v", err)
+			}
+			if other["usage_source"] != "reserve_fallback" {
+				t.Fatalf("fallback usage was not marked: %#v", other)
+			}
+		})
+	}
+}
+
+func TestHeaderBillingZeroAndFailure(t *testing.T) {
+	t.Run("zero cost", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-AISA-Customer-Cost-Micros-USD", "0")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer upstream.Close()
+
+		manifest := newHeaderBillingTestManifest(upstream.URL)
+		recorder, user, db := executeHeaderBillingCapability(t, manifest)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("unexpected response: code=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var fresh model.User
+		if err := db.First(&fresh, user.Id).Error; err != nil {
+			t.Fatalf("load user: %v", err)
+		}
+		if fresh.Quota != user.Quota {
+			t.Fatalf("zero cost changed quota from %d to %d", user.Quota, fresh.Quota)
+		}
+	})
+
+	t.Run("upstream failure refunds", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"code":"provider request failed","message":"secret provider detail"}}`))
+		}))
+		defer upstream.Close()
+
+		manifest := newHeaderBillingTestManifest(upstream.URL)
+		manifest.Response.ErrorCodePath = "$.error.code"
+		manifest.Response.ErrorMap = map[string]capability.ErrorMapSpec{
+			"502": {Code: "upstream_unavailable", HTTPStatus: 503, Message: "The upstream data service is temporarily unavailable.", LogCode: "upstream_provider_failure"},
+		}
+		recorder, user, db := executeHeaderBillingCapability(t, manifest)
+		if recorder.Code != http.StatusServiceUnavailable || strings.Contains(recorder.Body.String(), "secret") {
+			t.Fatalf("unexpected sanitized failure: code=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		waitForCapabilityQuota(t, db, user.Id, user.Quota)
+		log := latestCapabilityLog(t, db, manifest.ID)
+		if !strings.Contains(log.Other, "upstream_provider_failure") || strings.Contains(log.Other, "secret") {
+			t.Fatalf("unexpected error log: %s", log.Other)
+		}
+	})
+
+	t.Run("missing header without reserve fails and refunds", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer upstream.Close()
+
+		manifest := newHeaderBillingTestManifest(upstream.URL)
+		manifest.Billing.ReserveUSD = 0
+		manifest.Billing.PriceUSD = 0.000001
+		recorder, user, db := executeHeaderBillingCapability(t, manifest)
+		var response struct {
+			ErrorCode string `json:"error_code"`
+		}
+		if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if recorder.Code != http.StatusBadGateway || response.ErrorCode != "missing_usage" {
+			t.Fatalf("unexpected response: code=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		waitForCapabilityQuota(t, db, user.Id, user.Quota)
+	})
+}
+
+func TestCapabilityListIncludesPerUnitMaxUSD(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ListCapabilities(ctx)
+	var response struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Billing struct {
+				MaxUSD float64 `json:"max_usd"`
+			} `json:"billing"`
+		} `json:"data"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode capability list: %v", err)
+	}
+	found := false
+	for _, item := range response.Data {
+		if item.ID == "site-referrals-v1" {
+			found = true
+			if item.Billing.MaxUSD != 1.50 {
+				t.Fatalf("unexpected max_usd: %#v", item.Billing)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("site-referrals-v1 is missing from capability list")
 	}
 }

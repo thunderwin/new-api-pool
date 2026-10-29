@@ -2,6 +2,8 @@ package capability
 
 import (
 	"fmt"
+	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +47,8 @@ type RequestSpec struct {
 	ContentType string                  `json:"content_type,omitempty"`
 	Query       map[string]string       `json:"query,omitempty"`
 	Body        map[string]string       `json:"body,omitempty"`
+	BodyWrap    string                  `json:"body_wrap,omitempty"`
+	Headers     map[string]string       `json:"headers,omitempty"`
 	Defaults    map[string]any          `json:"defaults,omitempty"`
 	Consts      map[string]string       `json:"consts,omitempty"`
 	Env         map[string]string       `json:"env,omitempty"`
@@ -91,10 +95,19 @@ type ContentSpec struct {
 }
 
 type ResponseSpec struct {
-	Output       map[string]string `json:"output"`
-	Success      *SuccessSpec      `json:"success,omitempty"`
-	StatusHeader string            `json:"status_header,omitempty"`
-	ErrorHeader  string            `json:"error_header,omitempty"`
+	Output        map[string]string       `json:"output"`
+	Success       *SuccessSpec            `json:"success,omitempty"`
+	StatusHeader  string                  `json:"status_header,omitempty"`
+	ErrorHeader   string                  `json:"error_header,omitempty"`
+	ErrorCodePath string                  `json:"error_code_path,omitempty"`
+	ErrorMap      map[string]ErrorMapSpec `json:"error_map,omitempty"`
+}
+
+type ErrorMapSpec struct {
+	Code       string `json:"code"`
+	HTTPStatus int    `json:"http_status"`
+	Message    string `json:"message"`
+	LogCode    string `json:"log_code,omitempty"`
 }
 
 type SuccessSpec struct {
@@ -106,11 +119,13 @@ type SuccessSpec struct {
 }
 
 type BillingSpec struct {
-	Type         string  `json:"type"`
-	Unit         string  `json:"unit,omitempty"`
-	PriceUSD     float64 `json:"price_usd"`
-	QuantityPath string  `json:"quantity_path,omitempty"`
-	EstimatePath string  `json:"estimate_path,omitempty"`
+	Type           string  `json:"type"`
+	Unit           string  `json:"unit,omitempty"`
+	PriceUSD       float64 `json:"price_usd"`
+	QuantityPath   string  `json:"quantity_path,omitempty"`
+	QuantityHeader string  `json:"quantity_header,omitempty"`
+	EstimatePath   string  `json:"estimate_path,omitempty"`
+	ReserveUSD     float64 `json:"reserve_usd,omitempty"`
 }
 
 type LimitsSpec struct {
@@ -128,9 +143,35 @@ type IdempotencySpec struct {
 	TTL    string `json:"ttl,omitempty"`
 }
 
+var manifestIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$`)
+var headerFieldNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
+
+var forbiddenStaticHeaders = map[string]struct{}{
+	"authorization":       {},
+	"proxy-authorization": {},
+	"cookie":              {},
+	"set-cookie":          {},
+	"host":                {},
+	"content-type":        {},
+	"content-length":      {},
+	"api-key":             {},
+	"x-api-key":           {},
+	"x-goog-api-key":      {},
+	"transfer-encoding":   {},
+	"connection":          {},
+	"proxy-connection":    {},
+	"keep-alive":          {},
+	"te":                  {},
+	"trailer":             {},
+	"upgrade":             {},
+}
+
 func (m *Manifest) Validate() error {
 	if strings.TrimSpace(m.ID) == "" {
 		return fmt.Errorf("manifest id is required")
+	}
+	if !manifestIDPattern.MatchString(m.ID) {
+		return fmt.Errorf("manifest %s: id must match <capability>-v<major>", m.ID)
 	}
 	if m.Mode != ModeSync && m.Mode != ModeAsync {
 		return fmt.Errorf("manifest %s: mode must be sync or async", m.ID)
@@ -141,8 +182,21 @@ func (m *Manifest) Validate() error {
 	if m.Billing.PriceUSD < 0 {
 		return fmt.Errorf("manifest %s: price_usd cannot be negative", m.ID)
 	}
-	if m.Billing.Type == BillingPerUnit && strings.TrimSpace(m.Billing.QuantityPath) == "" {
-		return fmt.Errorf("manifest %s: per_unit billing requires quantity_path", m.ID)
+	if m.Billing.ReserveUSD < 0 {
+		return fmt.Errorf("manifest %s: reserve_usd cannot be negative", m.ID)
+	}
+	if m.Billing.Type == BillingPerUnit &&
+		strings.TrimSpace(m.Billing.QuantityPath) == "" &&
+		strings.TrimSpace(m.Billing.QuantityHeader) == "" {
+		return fmt.Errorf("manifest %s: per_unit billing requires quantity_path or quantity_header", m.ID)
+	}
+	if strings.TrimSpace(m.Billing.QuantityPath) != "" && strings.TrimSpace(m.Billing.QuantityHeader) != "" {
+		return fmt.Errorf("manifest %s: quantity_path and quantity_header are mutually exclusive", m.ID)
+	}
+	if header := strings.TrimSpace(m.Billing.QuantityHeader); header != "" {
+		if err := validateHeaderName(header); err != nil {
+			return fmt.Errorf("manifest %s: billing.quantity_header: %w", m.ID, err)
+		}
 	}
 	if m.Mode == ModeAsync && m.Billing.Type == BillingPerUnit &&
 		strings.TrimSpace(m.Billing.EstimatePath) == "" {
@@ -169,6 +223,14 @@ func (m *Manifest) Validate() error {
 					return fmt.Errorf("manifest %s: request.env contains an empty field or variable", m.ID)
 				}
 			}
+			if wrap := strings.TrimSpace(m.Request.BodyWrap); wrap != "" && wrap != "array" {
+				return fmt.Errorf("manifest %s: request.body_wrap must be empty or array", m.ID)
+			}
+			for name, value := range m.Request.Headers {
+				if err := validateStaticHeader(name, value); err != nil {
+					return fmt.Errorf("manifest %s: request.headers: %w", m.ID, err)
+				}
+			}
 			for field, spec := range m.Request.URLInputs {
 				if strings.TrimSpace(field) == "" || len(spec.AllowedHosts) == 0 {
 					return fmt.Errorf("manifest %s: request.url_inputs.%s requires allowed_hosts", m.ID, field)
@@ -189,6 +251,20 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("manifest %s: response.success.path requires values", m.ID)
 			}
 		}
+		for key, mapping := range m.Response.ErrorMap {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("manifest %s: response.error_map contains an empty key", m.ID)
+			}
+			if strings.TrimSpace(mapping.Code) == "" {
+				return fmt.Errorf("manifest %s: response.error_map.%s.code is required", m.ID, key)
+			}
+			if mapping.HTTPStatus < http.StatusBadRequest || mapping.HTTPStatus > 599 {
+				return fmt.Errorf("manifest %s: response.error_map.%s.http_status must be 4xx or 5xx", m.ID, key)
+			}
+			if strings.TrimSpace(mapping.Message) == "" {
+				return fmt.Errorf("manifest %s: response.error_map.%s.message is required", m.ID, key)
+			}
+		}
 	} else {
 		if m.Submit == nil || strings.TrimSpace(m.Submit.Endpoint) == "" || m.Submit.JobIDPath == "" {
 			return fmt.Errorf("manifest %s: async submit.endpoint and job_id_path are required", m.ID)
@@ -197,6 +273,27 @@ func (m *Manifest) Validate() error {
 			m.Poll.StatusPath == "" || m.Poll.ResultPath == "" {
 			return fmt.Errorf("manifest %s: async poll.endpoint, status_path and result_path are required", m.ID)
 		}
+	}
+	return nil
+}
+
+func validateStaticHeader(name string, value string) error {
+	if err := validateHeaderName(name); err != nil {
+		return err
+	}
+	canonical := strings.ToLower(strings.TrimSpace(name))
+	if _, forbidden := forbiddenStaticHeaders[canonical]; forbidden {
+		return fmt.Errorf("header %q is not allowed", name)
+	}
+	if strings.ContainsAny(value, "\r\n\x00") {
+		return fmt.Errorf("header %q contains an invalid value", name)
+	}
+	return nil
+}
+
+func validateHeaderName(name string) error {
+	if !headerFieldNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid header name %q", name)
 	}
 	return nil
 }

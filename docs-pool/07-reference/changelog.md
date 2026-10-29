@@ -13,6 +13,29 @@
 
 ---
 
+## v0.6.5 — AISA 搜索与 SEO Capability（2026-10-29）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 接入 AISA 的 16 个同步能力：Similarweb 流量/渠道/引荐/相似站点，DataForSEO 外链/排名/竞品/关键词/SERP/AI 提及/单页审计 |
+| `+` | Manifest 通用字段：`request.body_wrap`、`request.headers`、`billing.quantity_header`、`billing.reserve_usd`、`response.error_code_path`、`response.error_map` |
+| `*` | POST 的 `request.consts` 只进入 body，不再意外混入 query；GET 仍按声明进入 query |
+| `+` | 响应头用量按实际成功成本结算；同步 per-unit 可固定预扣，缺少或非法数量头时按 reserve 兜底并记录 `usage_source=reserve_fallback` |
+| `+` | 上游 402 余额、401/鉴权依赖和 402 价格上限映射为稳定公共错误；不回传上游 message，日志保留可区分的上游错误类别 |
+| `+` | `/v1/capabilities` 的 `per_unit` 条目增加 `billing.max_usd`，值等于 `reserve_usd` |
+| `*` | `set-capability-secret.sh` 支持任意合法 `CAPABILITY_*` 变量名；不带参数保持 Bright Data 默认行为 |
+| `+` | compose 透传 `CAPABILITY_AISA_API_KEY` |
+| `+` | 离线测试覆盖数组 body、静态/幂等头、query 隔离、response header 计费、reserve fallback、零成本、退款、错误映射、脱敏和 16 个 Manifest 校验 |
+
+### 免费 quote 验证
+
+- 16 个能力默认请求全部 HTTP 200 且返回 `object=cost_estimate`
+- 默认预估合计 `$3.625236`
+- `site-referrals-v1` 默认 5 条预估 `$1.50`；20 条原预估 `$6.00`，因此降低默认条数
+- `similar-sites-v1` 默认 2 条预估 `$0.75`
+
+---
+
 ## v0.6.4 — Bright Data 网页抓取 Capability（2026-10-23）
 
 | 类型 | 变更 |

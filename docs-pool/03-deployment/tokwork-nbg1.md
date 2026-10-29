@@ -206,31 +206,36 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 > 否则 `go build` 会失败。线上设了 `FRONTEND_BASE_URL`，二进制里嵌的这套 SPA
 > 不会被服务（`https://api.tokwork.com/` 是 301，见 §3）。
 
-### Capability 环境变量（2026-10-23）
+### Capability 环境变量（2026-10-29）
 
-`web-unlock-v1` 需要两个服务端环境变量，值只写进服务器 `.env`：
+Capability 凭证值只写进服务器 `.env`：
 
 | 变量 | 用途 | 是否秘密 |
 |---|---|---|
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
+| `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 已设置；容器在重建后读取） | **是** |
 
-两个变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
-显式透传；只写 `.env` 不会进入容器。缺任一变量时 `web-unlock-v1` 返回
-`credential_error`，不调用 Bright Data、不扣费。
+以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
+显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
+`credential_error`；缺 AISA key 时 16 个 AISA 能力同样返回 `credential_error`。
+两种情况都不会调用上游、不扣费。
 
 API key 用交互脚本设置，不要在命令行参数、聊天或文档里传值：
 
 ```bash
 cd /path/to/new-api-pool
 ./ops/deploy/set-capability-secret.sh
+./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
 ```
 
 脚本默认目标 `root@2.31.8.21`、远端目录 `/opt/new-api-pool`，可用
 `SSH_TARGET` / `REMOTE_DIR` / `SSH_IDENTITY_FILE` 覆盖。本机实际使用
-`SSH_IDENTITY_FILE="$HOME/.ssh/id_ed25519_tokwork"`。它会先备份 `.env`，原子替换
-`CAPABILITY_BRIGHTDATA_API_KEY=` 行，保持 `chmod 600`，再执行
-`docker compose up -d new-api`，最后只报告“已设置/未设置”。
+`SSH_IDENTITY_FILE="$HOME/.ssh/id_ed25519_tokwork"`。不带变量名时默认设置
+`CAPABILITY_BRIGHTDATA_API_KEY`；变量名只允许 `^CAPABILITY_[A-Z0-9_]+$`。
+脚本会先备份 `.env`，原子替换目标变量的行，保持 `chmod 600`，再执行
+`docker compose up -d new-api`，最后只报告“已设置/未设置”。`--dry-run`
+可在本地临时目录验证默认变量或指定变量，不会连接服务器。
 
 ## 6. 容器与资源预算
 
@@ -310,7 +315,7 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | `ops/deploy/gen-env.sh` | 在服务器本地生成 `.env`（PG/Redis 密码、SESSION_SECRET、CRYPTO_SECRET） |
 | `ops/deploy/backup.sh` | 每日 pg_dump + 自检 + 清理 + 可选 rclone |
 | `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
-| `ops/deploy/set-capability-secret.sh` | 交互式设置 `CAPABILITY_BRIGHTDATA_API_KEY`，经 SSH stdin 传输并重建后端容器 |
+| `ops/deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量（默认 Bright Data key），经 SSH stdin 传输并重建后端容器 |
 
 > `ops/` 在**仓库里**（`<REPO>/ops/`）。早前它在仓库外层，
 > 导致别人克隆公开仓库后照着本文找不到脚本 —— 2026-10-10 已移入仓库，
@@ -322,10 +327,10 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 **已核实 2026-10-23 的流程：**
 
 1. 在 `new-api-pool/` 构建前端和 linux/amd64 后端，上传 `new-api`。
-2. 上传/更新 `ops/deploy/docker-compose.yml`，确认两个 Capability 环境变量在
+2. 上传/更新 `ops/deploy/docker-compose.yml`，确认 Bright Data 和 AISA 的 Capability 环境变量在
    `new-api.environment` 中显式透传。
 3. 服务器上先备份当前二进制、compose 和 `.env`，再构建/启动容器。
-4. 只读检查 `.env` 是否存在两个变量名，不打印值。
+4. 只读检查 `.env` 是否存在所需变量名，不打印值。
 5. 验证 `/api/status`、容器健康、`GET /v1/capabilities` 的 3 个能力和既有聊天回归。
 
 回滚时恢复同一轮备份的二进制、compose 文件和 `.env`，再执行

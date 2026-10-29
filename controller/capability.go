@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -36,23 +37,31 @@ type asyncCapabilityRequest struct {
 func ListCapabilities(c *gin.Context) {
 	items := make([]gin.H, 0)
 	for _, m := range capability.List() {
-		unit := m.Billing.Unit
-		if unit == "" && m.Billing.Type == capability.BillingPerCall {
-			unit = "call"
-		}
 		items = append(items, gin.H{
 			"id":          m.ID,
 			"provider":    m.Provider,
 			"mode":        m.Mode,
 			"description": m.Description,
-			"billing": gin.H{
-				"type":      m.Billing.Type,
-				"unit":      unit,
-				"price_usd": m.Billing.PriceUSD,
-			},
+			"billing":     capabilityBillingPayload(m),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": items})
+}
+
+func capabilityBillingPayload(m *capability.Manifest) gin.H {
+	unit := m.Billing.Unit
+	if unit == "" && m.Billing.Type == capability.BillingPerCall {
+		unit = "call"
+	}
+	payload := gin.H{
+		"type":      m.Billing.Type,
+		"unit":      unit,
+		"price_usd": m.Billing.PriceUSD,
+	}
+	if m.Billing.Type == capability.BillingPerUnit {
+		payload["max_usd"] = m.Billing.ReserveUSD
+	}
+	return payload
 }
 
 // ExecuteCapability runs a synchronous capability. It uses the same sk- token
@@ -94,20 +103,20 @@ func ExecuteCapability(c *gin.Context) {
 	result, execErr := capability.ExecuteSync(c.Request.Context(), m, req.Input, req.IdempotencyKey)
 	if execErr != nil {
 		refundCapabilityBilling(c, info)
-		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, "", "call", 0, "sync")
+		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, execErr.LogCode, "", "call", 0, "sync", "")
 		respondCapabilityError(c, execErr)
 		return
 	}
 
-	actualQuota, usageUnit, usageQty, usageErr := capabilitySyncUsage(m, priceData, result.Raw)
+	actualQuota, usageUnit, usageQty, usageSource, usageErr := capabilitySyncUsage(m, priceData, result.Raw, result.Headers)
 	if usageErr != nil {
 		refundCapabilityBilling(c, info)
-		logCapabilityConsume(c, m, info, 0, "failed", "missing_usage", result.UpstreamRequestID, usageUnit, 0, "sync")
+		logCapabilityConsume(c, m, info, 0, "failed", usageErr.Code, usageErr.LogCode, result.UpstreamRequestID, usageUnit, 0, "sync", usageSource)
 		respondCapabilityError(c, usageErr)
 		return
 	}
 	if err := service.SettleBilling(c, info, actualQuota); err != nil {
-		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", result.UpstreamRequestID, usageUnit, usageQty, "sync")
+		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", "billing_settle_failed", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
 		respondCapabilityError(c, &capability.ExecutionError{
 			Code:       "billing_failed",
 			Message:    "billing settlement failed",
@@ -116,7 +125,7 @@ func ExecuteCapability(c *gin.Context) {
 		return
 	}
 
-	logCapabilityConsume(c, m, info, actualQuota, "succeeded", "", result.UpstreamRequestID, usageUnit, usageQty, "sync")
+	logCapabilityConsume(c, m, info, actualQuota, "succeeded", "", "", result.UpstreamRequestID, usageUnit, usageQty, "sync", usageSource)
 	c.JSON(http.StatusOK, gin.H{
 		"success":             true,
 		"id":                  info.RequestId,
@@ -202,7 +211,7 @@ func SubmitCapabilityTask(c *gin.Context) {
 	if execErr != nil {
 		refundCapabilityBilling(c, info)
 		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, "", "call", 0, "async")
+		logCapabilityConsume(c, m, info, 0, "failed", execErr.Code, execErr.LogCode, "", "call", 0, "async", "")
 		respondCapabilityError(c, execErr)
 		return
 	}
@@ -212,7 +221,7 @@ func SubmitCapabilityTask(c *gin.Context) {
 	if err := service.SettleBilling(c, info, priceData.Quota); err != nil {
 		refundCapabilityBilling(c, info)
 		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", submit.UpstreamRequestID, "call", 0, "async")
+		logCapabilityConsume(c, m, info, 0, "failed", "billing_failed", "billing_settle_failed", submit.UpstreamRequestID, "call", 0, "async", "")
 		respondCapabilityError(c, &capability.ExecutionError{
 			Code:       "billing_failed",
 			Message:    "billing settlement failed",
@@ -255,7 +264,7 @@ func SubmitCapabilityTask(c *gin.Context) {
 	if err := model.DB.Create(task).Error; err != nil {
 		refundCapabilityBilling(c, info)
 		dropCapabilityClaim(userId, m.ID, keyHash, claim)
-		logCapabilityConsume(c, m, info, 0, "failed", "task_persist_failed", submit.UpstreamRequestID, "call", 0, "async")
+		logCapabilityConsume(c, m, info, 0, "failed", "task_persist_failed", "", submit.UpstreamRequestID, "call", 0, "async", "")
 		respondCapabilityError(c, &capability.ExecutionError{
 			Code:       "task_persist_failed",
 			Message:    "could not persist task",
@@ -270,7 +279,7 @@ func SubmitCapabilityTask(c *gin.Context) {
 		}
 	}
 	logUnit, logQuantity := capabilityEstimatedUsage(m, req.Input)
-	logCapabilityConsume(c, m, info, priceData.Quota, "submitted", "", submit.UpstreamRequestID, logUnit, logQuantity, "async")
+	logCapabilityConsume(c, m, info, priceData.Quota, "submitted", "", "", submit.UpstreamRequestID, logUnit, logQuantity, "async", "")
 	c.JSON(http.StatusAccepted, gin.H{
 		"success": true,
 		"id":      task.TaskID,
@@ -343,7 +352,7 @@ func GetCapabilityTask(c *gin.Context) {
 				UsePrice:       true,
 				GroupRatioInfo: types.GroupRatioInfo{GroupRatio: data.Billing.GroupRatio},
 			}
-			actualQuota, _, _, usageErr := capabilitySyncUsage(m, priceData, poll.Raw)
+			actualQuota, _, _, _, usageErr := capabilitySyncUsage(m, priceData, poll.Raw, nil)
 			if usageErr != nil {
 				task.Status = model.TaskStatusFailure
 				task.FailReason = "missing usage"
@@ -427,11 +436,13 @@ func prepareCapabilityBilling(c *gin.Context, m *capability.Manifest, input map[
 
 	preQuota := 0
 	if m.Billing.Type == capability.BillingPerCall {
-		preQuota = int(m.Billing.PriceUSD * float64(common.QuotaPerUnit) * group.GroupRatio)
+		preQuota = usdToQuota(m.Billing.PriceUSD, group.GroupRatio)
+	} else if m.Mode == capability.ModeSync && m.Billing.ReserveUSD > 0 {
+		preQuota = usdToQuota(m.Billing.ReserveUSD, group.GroupRatio)
 	} else if m.Billing.Type == capability.BillingPerUnit && m.Billing.EstimatePath != "" {
 		if v, ok := capability.Lookup(map[string]any{"input": input}, m.Billing.EstimatePath); ok {
 			if qty, ok := capability.NumberValue(v); ok && qty > 0 {
-				preQuota = int(m.Billing.PriceUSD * qty * float64(common.QuotaPerUnit) * group.GroupRatio)
+				preQuota = quantityToQuota(m.Billing.PriceUSD, qty, group.GroupRatio)
 			}
 		}
 	}
@@ -462,13 +473,47 @@ func prepareCapabilityBilling(c *gin.Context, m *capability.Manifest, input map[
 	return info, priceData, nil
 }
 
-func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw map[string]any) (int, string, float64, *capability.ExecutionError) {
+func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw map[string]any, headers http.Header) (int, string, float64, string, *capability.ExecutionError) {
 	if m.Billing.Type == capability.BillingPerCall {
-		return priceData.Quota, "call", 1, nil
+		return priceData.Quota, "call", 1, "call", nil
+	}
+	unit := m.Billing.Unit
+	if unit == "" {
+		unit = "unit"
+	}
+	if strings.TrimSpace(m.Billing.QuantityHeader) != "" {
+		rawValue := ""
+		if headers != nil {
+			rawValue = strings.TrimSpace(headers.Get(m.Billing.QuantityHeader))
+		}
+		quantity, ok := capability.NumberValue(rawValue)
+		if ok && quantity >= 0 {
+			quota := quantityToQuota(m.Billing.PriceUSD, quantity, priceData.GroupRatioInfo.GroupRatio)
+			return quota, unit, quantity, "response_header", nil
+		}
+		if m.Billing.ReserveUSD > 0 {
+			fallbackQuantity := 0.0
+			if m.Billing.PriceUSD > 0 {
+				fallbackQuantity = m.Billing.ReserveUSD / m.Billing.PriceUSD
+			}
+			return usdToQuota(m.Billing.ReserveUSD, priceData.GroupRatioInfo.GroupRatio), unit, fallbackQuantity, "reserve_fallback", nil
+		}
+		if rawValue == "" {
+			return 0, unit, 0, "response_header", &capability.ExecutionError{
+				Code:       "missing_usage",
+				Message:    "upstream response did not contain the billing quantity",
+				HTTPStatus: http.StatusBadGateway,
+			}
+		}
+		return 0, unit, 0, "response_header", &capability.ExecutionError{
+			Code:       "invalid_usage",
+			Message:    "upstream returned an invalid billing quantity",
+			HTTPStatus: http.StatusBadGateway,
+		}
 	}
 	value, ok := capability.Lookup(raw, m.Billing.QuantityPath)
 	if !ok {
-		return 0, m.Billing.Unit, 0, &capability.ExecutionError{
+		return 0, unit, 0, "response_body", &capability.ExecutionError{
 			Code:       "missing_usage",
 			Message:    "upstream response did not contain the billing quantity",
 			HTTPStatus: http.StatusBadGateway,
@@ -476,18 +521,22 @@ func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw
 	}
 	quantity, ok := capability.NumberValue(value)
 	if !ok || quantity < 0 {
-		return 0, m.Billing.Unit, 0, &capability.ExecutionError{
+		return 0, unit, 0, "response_body", &capability.ExecutionError{
 			Code:       "invalid_usage",
 			Message:    "upstream returned an invalid billing quantity",
 			HTTPStatus: http.StatusBadGateway,
 		}
 	}
-	quota := int(m.Billing.PriceUSD * quantity * float64(common.QuotaPerUnit) * priceData.GroupRatioInfo.GroupRatio)
-	unit := m.Billing.Unit
-	if unit == "" {
-		unit = "unit"
-	}
-	return quota, unit, quantity, nil
+	quota := quantityToQuota(m.Billing.PriceUSD, quantity, priceData.GroupRatioInfo.GroupRatio)
+	return quota, unit, quantity, "response_body", nil
+}
+
+func usdToQuota(amountUSD float64, groupRatio float64) int {
+	return int(math.Round(amountUSD * float64(common.QuotaPerUnit) * groupRatio))
+}
+
+func quantityToQuota(priceUSD float64, quantity float64, groupRatio float64) int {
+	return int(math.Round(priceUSD * quantity * float64(common.QuotaPerUnit) * groupRatio))
 }
 
 func capabilityEstimatedUsage(m *capability.Manifest, input map[string]any) (string, float64) {
@@ -563,7 +612,7 @@ func settleCapabilityTaskDelta(task *model.Task, preQuota int, actualQuota int) 
 	}
 }
 
-func logCapabilityConsume(c *gin.Context, m *capability.Manifest, info *relaycommon.RelayInfo, quota int, status string, errCode string, upstreamID string, unit string, quantity float64, mode string) {
+func logCapabilityConsume(c *gin.Context, m *capability.Manifest, info *relaycommon.RelayInfo, quota int, status string, errCode string, upstreamLogCode string, upstreamID string, unit string, quantity float64, mode string, usageSource string) {
 	if info == nil {
 		return
 	}
@@ -587,9 +636,11 @@ func logCapabilityConsume(c *gin.Context, m *capability.Manifest, info *relaycom
 			"mode":                mode,
 			"status":              status,
 			"error_code":          errCode,
+			"upstream_error_code": upstreamLogCode,
 			"upstream_request_id": upstreamID,
 			"usage_unit":          unit,
 			"usage_quantity":      quantity,
+			"usage_source":        usageSource,
 		},
 	})
 }

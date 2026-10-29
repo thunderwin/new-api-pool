@@ -308,12 +308,24 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 
 2026-10-23 新增的 Manifest 通用能力：
 
-- `request.required`：预扣费前校验必填输入。
+- `request.required`：预扣费前校验必填输入；Manifest 默认值可补足调用方未传字段。
 - `request.url_inputs`：限制 HTTPS URL 的允许域名，拒绝 userinfo、IP 字面量和非默认端口。
 - `request.env`：把 POST body 字段绑定到服务端环境变量，缺失时返回 `credential_error`。
-- `request.consts`：同时覆盖 query 与 POST body 的固定字段。
+- `request.consts`：固定字段。GET 放入 query，POST 只放入 body，不混入未声明的 query。
 - `response.success`：按业务状态码和正文非空判断成功。
 - `response.status_header` / `response.error_header`：识别 HTTP 200 包装的上游错误。
+
+2026-10-29 新增的 Manifest 通用能力：
+
+- `request.body_wrap: "array"`：把组装好的 POST JSON object 作为单元素数组发送。
+- `request.headers`：发送 Manifest 声明的静态请求头；拒绝 `Authorization`、`Host`、
+  `Content-Length`、Cookie 和 hop-by-hop 头。
+- `billing.quantity_header`：从成功响应头读取非负整数/小数用量，与 `quantity_path` 二选一。
+- `billing.reserve_usd`：同步 `per_unit` 的固定预扣额；响应缺少合法数量头时按该金额结算，
+  消费日志标记 `usage_source=reserve_fallback`。
+- `response.error_code_path` + `response.error_map`：按上游业务错误码或 HTTP 状态映射为稳定
+  公共错误码和 HTTP 状态；用户响应不回传上游原始 message。
+- `/v1/capabilities` 的 `per_unit` 条目额外返回 `billing.max_usd`（等于 `reserve_usd`）。
 
 ---
 
@@ -398,11 +410,12 @@ limits:
 3. 计费单位（次/页/秒/MB/item/token）和价格来源？
 4. 上游鉴权方式（Bearer/header/query/HMAC/OAuth2）？
 5. 上游错误码与可重试规则？
-6. 幂等键是否支持？TTL 多久？
-7. 最大请求体/响应体/超时？
-8. 是否需要固定出口 IP/白名单？
-9. 一个成功响应和一个失败响应的完整样例？
-10. 是否需要内容下载/签名 URL？
+6. 用量从响应正文还是响应头读取？是否有单次成本上限和兜底预扣额？
+7. 幂等键是否支持？TTL 多久？
+8. 最大请求体/响应体/超时？
+9. 是否需要固定出口 IP/白名单？
+10. 一个成功响应和一个失败响应的完整样例？
+11. 是否需要内容下载/签名 URL？
 
 缺任何一项，不进入生产。
 

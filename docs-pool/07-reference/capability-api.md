@@ -1,6 +1,6 @@
-# 第三方 Capability API（2026-10-23 更新）
+# 第三方 Capability API（2026-10-29 更新）
 
-> 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + `web-unlock-v1` 已实现**。
+> 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
 >
 > 2026-10-23 追加：异步 per-unit（估算预扣 + 终态差额结算）和
@@ -10,6 +10,9 @@
 > 常量/环境变量覆盖，以及业务成功条件；新增 Bright Data Web Unlocker
 > `web-unlock-v1`。部署记录见
 > [`../03-deployment/tokwork-nbg1.md`](../03-deployment/tokwork-nbg1.md)。
+>
+> 2026-10-29 追加：通用执行器支持 POST 数组 body、静态请求头、响应头用量、
+> 固定预扣上限和稳定错误映射；接入 AISA 的 16 个搜索/SEO 能力。
 
 ## 路由
 
@@ -54,10 +57,12 @@ POST /v1/capabilities/weather-v1
 
 | 字段 | 语义 |
 |---|---|
-| `required` | 必填输入字段名数组。字段缺失、`null` 或空字符串时，在预扣费和上游请求之前返回 `400 invalid_request` |
+| `required` | 必填输入字段名数组。字段缺失、`null`、空字符串/空数组/空对象且没有 Manifest 默认值时，在预扣费和上游请求之前返回 `400 invalid_request` |
 | `url_inputs` | 映射输入字段到 `allowed_hosts`。只接受 HTTPS；主机必须精确匹配列表项或以 `.<域名>` 结尾；拒绝 userinfo、IP 字面量和非 443 端口 |
-| `consts` | 同时作用于 query 与 POST body 的常量；同名用户输入/默认值会被常量覆盖 |
+| `consts` | 固定字段。GET 放入 query，POST 只放入 body；POST 不会把常量混入未声明 query |
 | `env` | POST body 字段到服务端环境变量名的映射；同名用户输入和常量会被环境变量值覆盖。变量缺失返回 `credential_error` |
+| `body_wrap` | 只允许空值或 `"array"`；`"array"` 把组装好的 POST object 包成单元素数组 |
+| `headers` | 常量请求头。拒绝 `Authorization`、`Host`、`Content-Length`、Cookie 和 hop-by-hop 头，也拒绝非法名称和换行注入 |
 
 `response` 还可声明：
 
@@ -67,8 +72,15 @@ POST /v1/capabilities/weather-v1
 | `success.non_empty` | 指定正文路径必须非空，否则返回 `upstream_empty_body` |
 | `success.failure_code` / `success.empty_code` | 覆盖上述两个稳定错误码 |
 | `status_header` / `error_header` | 供应商以 HTTP 200 包装错误时，从响应头读取目标状态和错误标记；错误标记触发失败，重试按目标状态判断 |
+| `error_code_path` | 从 JSON 错误体提取上游 code；正文为字符串时忽略 |
+| `error_map` | 上游 code 或 HTTP 状态到 `{code, http_status, message, log_code}` 的稳定映射；用户只看到公共文案 |
 
 业务失败沿用统一退款路径。错误响应和日志不回传上游正文；目标状态码可以作为数字记录。
+
+AISA 的 402 余额不足属于**运营方账户余额**，统一映射为 `503 upstream_unavailable`；
+401 / `authentication_unavailable` 也是 `503`，日志分别记为上游鉴权错误。
+`estimated_price_exceeds_max_price` 映射为 `422 cost_cap_exceeded`，提示缩小月份、
+指标或条数。其他上游 message 不原样返回。
 
 ## 异步契约
 
@@ -104,6 +116,22 @@ GET /v1/tasks/task_...
 | `weather-v1` | Open-Meteo | 同步 | $0 / 次 | 坐标 → 当前温度/风速，无需 key |
 | `ssl-analyze-v1` | SSL Labs | 异步 | $0 / 次 | host → 提交分析、轮询状态、返回 endpoints |
 | `web-unlock-v1` | Bright Data Web Unlocker | 同步 | $0.003 / 次 | 抓取允许的 Wayfair 页面，返回目标状态码与 HTML |
+| `site-traffic-snapshot-v1` | AISA / Similarweb | 同步 | 上游实际成本 | 域名单月流量快照 |
+| `site-traffic-trend-v1` | AISA / Similarweb | 同步 | 上游实际成本 | 域名月度流量与 engagement 趋势 |
+| `traffic-channels-v1` | AISA / Similarweb | 同步 | 上游实际成本 | 营销渠道流量来源 |
+| `site-referrals-v1` | AISA / Similarweb | 同步 | 上游实际成本 | 引荐网站 |
+| `similar-sites-v1` | AISA / Similarweb | 同步 | 上游实际成本 | 相似网站 |
+| `backlinks-summary-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 外链汇总 |
+| `referring-domains-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 引荐域名 |
+| `backlink-anchors-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 外链锚文本 |
+| `backlink-competitors-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 外链竞品 |
+| `domain-rank-overview-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 域名排名与自然流量概览 |
+| `organic-competitors-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 自然搜索竞品 |
+| `ranked-keywords-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 域名排名关键词 |
+| `keyword-gap-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 两域名关键词交集/差距 |
+| `serp-google-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | Google 自然搜索 SERP |
+| `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
+| `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
 
 Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 
@@ -120,14 +148,76 @@ Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 - 输出：`{ "status": 200, "html": "<目标页面正文>" }`。
 - 超时 `90s`，最大响应 `8 MiB`；上游 `429/502/503/504` 最多再试一次。
 
+### AISA 搜索与 SEO 能力（2026-10-29）
+
+基址为 `https://api.aisa.one/apis/v1`，Bearer key 来自
+`CAPABILITY_AISA_API_KEY`。Manifest 只暴露白名单参数；DataForSEO 请求按 AISA 契约
+包成单元素数组。地区/语言默认为美国 (`location_code=2840`) / 英语 (`language_code=en`)，
+Similarweb 默认 `country=ww`、`granularity=monthly`。
+
+| ID | 用途与关键参数 | 单次上限 |
+|---|---|---|
+| `site-traffic-snapshot-v1` | 域名单月流量快照；`domain`、可选 `month` | $0.60 |
+| `site-traffic-trend-v1` | 月度流量趋势；`domain`、`start_date`、`end_date`、`metrics` | $1.00 |
+| `traffic-channels-v1` | 营销渠道来源；`domain`、`start_date`、`end_date` | $1.05 |
+| `site-referrals-v1` | 引荐网站；`domain`、日期、`limit`（默认 5，上游最大 20） | $1.50 |
+| `similar-sites-v1` | 相似网站；`domain`、日期、`limit`（默认 2） | $0.75 |
+| `backlinks-summary-v1` | 外链汇总；`target`、链接范围 | $0.10 |
+| `referring-domains-v1` | 引荐域名；`target`、`limit`（默认 5） | $0.10 |
+| `backlink-anchors-v1` | 锚文本；`target`、`limit`（默认 5） | $0.10 |
+| `backlink-competitors-v1` | 外链竞品；`target`、`limit`（默认 5） | $0.10 |
+| `domain-rank-overview-v1` | 域名排名概览；`target`、地区、语言 | $0.05 |
+| `organic-competitors-v1` | 自然搜索竞品；`target`、地区、语言、`limit` | $0.10 |
+| `ranked-keywords-v1` | 排名关键词；`target`、地区、语言、`limit` | $0.30 |
+| `keyword-gap-v1` | 关键词差距；`target1`、`target2`、地区、语言 | $0.10 |
+| `serp-google-v1` | Google SERP；`keyword`、地区、语言、设备、`depth` | $0.05 |
+| `ai-brand-mentions-v1` | AI 品牌露出；`target` 必须是 `[{"domain":"..."}]` 或 `[{"keyword":"..."}]` | $0.20 |
+| `page-seo-audit-v1` | 单页审计；`url`，JS/浏览器渲染默认关闭 | $0.03 |
+
+`X-AISA-Max-Price-USD` 是上游调用前的准入上限，不保证最终扣费不超过该金额；
+平台仍按成功响应头 `X-AISA-Customer-Cost-Micros-USD` 的实际值结算。
+Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上游重复 key
+返回 409，不重放原结果。AISA 只对 429/503 最多重试一次，不对 200 或 502 重试。
+
+2026-10-29 对 16 个能力的默认请求逐个执行免费 quote：全部 HTTP 200 且返回
+`object=cost_estimate`。默认预估合计 `$3.625236`；单次预估范围为
+`$0.0051`（`page-seo-audit-v1`）到 `$1.50`（`site-referrals-v1`）。
+`site-referrals-v1` 原计划默认 20 条报价 `$6.00`，受单次上限约束改为默认 5；
+`similar-sites-v1` 默认从 5 调为 2，使报价从 `$1.875` 降到 `$0.75`。
+
 ## 计费
 
 - Manifest 的 `billing.price_usd` 是唯一价格来源，不读硬编码。
 - `per_call`：提交/执行前预扣；同步成功结算，失败退款。
-- `per_unit`：同步支持按上游返回的 `quantity_path` 结算（如页数）。
+- `per_unit`：同步支持按上游返回的 `quantity_path` 或 `quantity_header` 结算；
+  两者只能声明一个。响应头数字必须是非负整数或小数。
+- 同步 `per_unit` 可声明 `reserve_usd`：调用前固定预扣该金额；成功但数量头缺失或非法时，
+  按 `reserve_usd` 结算，消费日志的 `usage_source=reserve_fallback`，不返回 502。
+  数量头为 `0` 时按 0 结算。失败仍全额退款。
 - 异步 `per_unit`：manifest 必须声明 `estimate_path`，提交时按预估量预扣；
   任务完成时按 `quantity_path` 读取实际用量，差额补扣/退还。
 - 价格为 0 的 capability 不创建 billing session，零余额用户也能调用。
+- `GET /v1/capabilities` 对 `per_unit` 额外返回 `billing.max_usd`，当前等于
+  `billing.reserve_usd`。
+
+### AISA 按成本计价
+
+AISA 能力的 `quantity_header` 是
+`X-AISA-Customer-Cost-Micros-USD`，值为微美元；`billing.unit=micro_usd`。
+本批 Manifest 的 `billing.price_usd=0.000001`，表示每 1 微美元上游成本收
+$0.000001，即当前按 1 倍成本价。实际 quota 仍为：
+
+```text
+price_usd × quantity × QuotaPerUnit × GroupRatio
+```
+
+以后要加价只改 Manifest 的 `price_usd`。例如加价 20% 写 `0.0000012`；
+不要改执行器或 controller 里的公式。
+
+响应缺少 `X-AISA-Customer-Cost-Micros-USD` 表示成本未知，不表示免费；
+本批能力因此保留 `reserve_usd` 兜底。`X-AISA-Max-Price-USD` 只是准入检查。
+AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficient`；客户收到
+`503 upstream_unavailable`，维护者需要给 AISA 账户充值。
 
 ## 幂等与并发
 
@@ -155,6 +245,7 @@ Capability 任务写入现有 `tasks` 表，`platform = "capability"`。
 - 每个 Manifest 有 timeout 和 `max_response_bytes`。
 - 不支持任意路径透传；只执行 Manifest 声明的 endpoint。
 - API key 不出现在 capability 日志；只记录 capability/provider/status/usage/cost。
+- 静态头在 Manifest `Validate()` 阶段拒绝鉴权、Cookie、Host、长度和 hop-by-hop 头。
 - 上游非 2xx 只返回稳定错误码，不回传上游原始错误体。
 
 ## 线上实测（2026-10-22）

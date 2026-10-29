@@ -107,6 +107,7 @@ services:
       # defining them only in .env does not expose them inside this container.
       CAPABILITY_BRIGHTDATA_API_KEY: ${CAPABILITY_BRIGHTDATA_API_KEY:-}
       CAPABILITY_BRIGHTDATA_ZONE: ${CAPABILITY_BRIGHTDATA_ZONE:-}
+      CAPABILITY_AISA_API_KEY: ${CAPABILITY_AISA_API_KEY:-}
       NODE_TYPE: master
       NODE_NAME: tokwork-nbg1
       # 本服务只做 API：设了这个变量后，未注册的网页路径（例如有人直接打开

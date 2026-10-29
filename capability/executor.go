@@ -22,6 +22,7 @@ type ExecutionError struct {
 	Message    string
 	HTTPStatus int
 	Retryable  bool
+	LogCode    string
 }
 
 func (e *ExecutionError) Error() string {
@@ -34,6 +35,7 @@ func (e *ExecutionError) Error() string {
 type SyncResult struct {
 	Output            map[string]any
 	Raw               map[string]any
+	Headers           http.Header
 	UpstreamRequestID string
 	HTTPStatus        int
 }
@@ -61,6 +63,8 @@ type httpSpec struct {
 	auth        *AuthSpec
 	query       map[string]string
 	body        map[string]string
+	bodyWrap    string
+	headers     map[string]string
 	defaults    map[string]any
 	consts      map[string]string
 	env         map[string]string
@@ -76,6 +80,9 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 	if m.Request != nil {
 		for _, field := range m.Request.Required {
 			value, ok := input[field]
+			if !ok && m.Request.Defaults != nil {
+				value, ok = m.Request.Defaults[field]
+			}
 			if !ok || isEmptyInputValue(value) {
 				return &ExecutionError{
 					Code:       "invalid_request",
@@ -113,11 +120,13 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	if m.Request != nil {
 		spec.query = m.Request.Query
 		spec.body = m.Request.Body
+		spec.bodyWrap = m.Request.BodyWrap
+		spec.headers = m.Request.Headers
 		spec.defaults = m.Request.Defaults
 		spec.consts = m.Request.Consts
 		spec.env = m.Request.Env
 	}
-	raw, status, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, headers, status, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
@@ -136,6 +145,7 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	return &SyncResult{
 		Output:            output,
 		Raw:               raw,
+		Headers:           headers,
 		UpstreamRequestID: upstreamID,
 		HTTPStatus:        status,
 	}, nil
@@ -158,7 +168,7 @@ func SubmitAsync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	if execErr := validateEnvironment(m); execErr != nil {
 		return nil, execErr
 	}
-	raw, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, _, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
@@ -196,7 +206,7 @@ func PollAsync(ctx context.Context, m *Manifest, input map[string]any, jobID str
 	if execErr := validateEnvironment(m); execErr != nil {
 		return nil, execErr
 	}
-	raw, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
+	raw, _, _, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
@@ -247,7 +257,7 @@ func FetchContent(ctx context.Context, m *Manifest, input map[string]any, jobID 
 	if err != nil {
 		return nil, "", &ExecutionError{Code: "invalid_timeout", Message: "capability timeout is invalid", HTTPStatus: http.StatusInternalServerError}
 	}
-	fullURL, err := buildURL(endpoint, m.Content.Query, m.Content.Consts, nil, input)
+	fullURL, err := buildURL(endpoint, mergeQuery(m.Content.Query, m.Content.Consts), nil, input)
 	if err != nil {
 		return nil, "", &ExecutionError{Code: "invalid_request", Message: "failed to build content URL", HTTPStatus: http.StatusBadRequest}
 	}
@@ -297,27 +307,31 @@ func FetchContent(ctx context.Context, m *Manifest, input map[string]any, jobID 
 	return raw, contentType, nil
 }
 
-func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string]any) (map[string]any, int, string, *ExecutionError) {
+func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string]any) (map[string]any, http.Header, int, string, *ExecutionError) {
 	timeout, err := m.Timeout()
 	if err != nil {
-		return nil, 0, "", &ExecutionError{Code: "invalid_timeout", Message: "capability timeout is invalid", HTTPStatus: http.StatusInternalServerError}
+		return nil, nil, 0, "", &ExecutionError{Code: "invalid_timeout", Message: "capability timeout is invalid", HTTPStatus: http.StatusInternalServerError}
 	}
 	maxBytes := m.Limits.MaxResponseBytes
 	if maxBytes <= 0 {
 		maxBytes = 1024 * 1024
 	}
 
-	endpoint, err := buildURL(spec.endpoint, spec.query, spec.consts, spec.defaults, input)
+	query := spec.query
+	if !strings.EqualFold(spec.method, http.MethodPost) {
+		query = mergeQuery(query, spec.consts)
+	}
+	endpoint, err := buildURL(spec.endpoint, query, spec.defaults, input)
 	if err != nil {
-		return nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to build upstream request", HTTPStatus: http.StatusBadRequest}
+		return nil, nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to build upstream request", HTTPStatus: http.StatusBadRequest}
 	}
 	if err := validateUpstreamURL(endpoint); err != nil {
-		return nil, 0, "", &ExecutionError{Code: "upstream_not_allowed", Message: "upstream endpoint is not allowed", HTTPStatus: http.StatusBadGateway}
+		return nil, nil, 0, "", &ExecutionError{Code: "upstream_not_allowed", Message: "upstream endpoint is not allowed", HTTPStatus: http.StatusBadGateway}
 	}
 
 	var bodyBytes []byte
 	if strings.EqualFold(spec.method, http.MethodPost) &&
-		(len(spec.body) > 0 || len(spec.consts) > 0 || len(spec.env) > 0) {
+		(len(spec.body) > 0 || len(spec.consts) > 0 || len(spec.env) > 0 || spec.bodyWrap == "array") {
 		body := make(map[string]any, len(spec.body)+len(spec.consts)+len(spec.env))
 		for key, path := range spec.body {
 			if v, ok := resolveValue(path, spec.defaults, input, key); ok {
@@ -330,7 +344,7 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 		for key, envName := range spec.env {
 			value := strings.TrimSpace(os.Getenv(envName))
 			if value == "" {
-				return nil, 0, "", &ExecutionError{
+				return nil, nil, 0, "", &ExecutionError{
 					Code:       "credential_error",
 					Message:    "upstream credential is not configured",
 					HTTPStatus: http.StatusInternalServerError,
@@ -338,9 +352,13 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 			}
 			body[key] = value
 		}
-		raw, err := common.Marshal(body)
+		var bodyValue any = body
+		if spec.bodyWrap == "array" {
+			bodyValue = []any{body}
+		}
+		raw, err := common.Marshal(bodyValue)
 		if err != nil {
-			return nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to encode upstream request", HTTPStatus: http.StatusBadRequest}
+			return nil, nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to encode upstream request", HTTPStatus: http.StatusBadRequest}
 		}
 		bodyBytes = raw
 	}
@@ -367,17 +385,20 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 		}
 		req, err := http.NewRequestWithContext(ctx, spec.method, endpoint, bodyReader)
 		if err != nil {
-			return nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to create upstream request", HTTPStatus: http.StatusBadRequest}
+			return nil, nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "failed to create upstream request", HTTPStatus: http.StatusBadRequest}
 		}
 		req.Header.Set("Accept", "application/json")
 		if bodyReader != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		for name, value := range spec.headers {
+			req.Header.Set(name, value)
+		}
 		if spec.idempotency != "" && m.Idempotency != nil && m.Idempotency.Header != "" {
 			req.Header.Set(m.Idempotency.Header, spec.idempotency)
 		}
 		if err := applyAuth(req, spec.auth); err != nil {
-			return nil, 0, "", &ExecutionError{Code: "credential_error", Message: "upstream credential is not configured", HTTPStatus: http.StatusInternalServerError}
+			return nil, nil, 0, "", &ExecutionError{Code: "credential_error", Message: "upstream credential is not configured", HTTPStatus: http.StatusInternalServerError}
 		}
 
 		resp, err := client.Do(req)
@@ -387,16 +408,16 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 				time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 				continue
 			}
-			return nil, 0, "", lastErr
+			return nil, nil, 0, "", lastErr
 		}
 		limited := io.LimitReader(resp.Body, maxBytes+1)
 		rawBody, readErr := io.ReadAll(limited)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return nil, 0, "", &ExecutionError{Code: "upstream_read_failed", Message: "failed to read upstream response", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, 0, "", &ExecutionError{Code: "upstream_read_failed", Message: "failed to read upstream response", HTTPStatus: http.StatusBadGateway}
 		}
 		if int64(len(rawBody)) > maxBytes {
-			return nil, 0, "", &ExecutionError{Code: "upstream_response_too_large", Message: "upstream response exceeded the limit", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, 0, "", &ExecutionError{Code: "upstream_response_too_large", Message: "upstream response exceeded the limit", HTTPStatus: http.StatusBadGateway}
 		}
 		effectiveStatus := resp.StatusCode
 		if m.Response != nil && m.Response.StatusHeader != "" {
@@ -411,21 +432,17 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 			if codeStatus <= 0 {
 				codeStatus = resp.StatusCode
 			}
-			lastErr = &ExecutionError{
-				Code:       "upstream_http_" + strconv.Itoa(codeStatus),
-				Message:    "upstream returned HTTP " + strconv.Itoa(codeStatus),
-				HTTPStatus: http.StatusBadGateway,
-				Retryable:  containsInt(m.Retry.RetryOn, codeStatus),
-			}
+			lastErr = mapUpstreamHTTPError(m.Response, rawBody, codeStatus)
+			lastErr.Retryable = containsInt(m.Retry.RetryOn, codeStatus)
 			if attempt < attempts && lastErr.Retryable {
 				time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 				continue
 			}
-			return nil, resp.StatusCode, "", lastErr
+			return nil, nil, resp.StatusCode, "", lastErr
 		}
 		var parsed map[string]any
 		if err := common.Unmarshal(rawBody, &parsed); err != nil {
-			return nil, resp.StatusCode, "", &ExecutionError{Code: "invalid_upstream_json", Message: "upstream returned invalid JSON", HTTPStatus: http.StatusBadGateway}
+			return nil, nil, resp.StatusCode, "", &ExecutionError{Code: "invalid_upstream_json", Message: "upstream returned invalid JSON", HTTPStatus: http.StatusBadGateway}
 		}
 		if m.Response != nil && m.Response.Success != nil {
 			if successErr := validateResponseSuccess(m.Response.Success, parsed); successErr != nil {
@@ -435,19 +452,19 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 					time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 					continue
 				}
-				return nil, resp.StatusCode, "", successErr
+				return nil, nil, resp.StatusCode, "", successErr
 			}
 		}
 		upstreamID := resp.Header.Get("X-Request-Id")
 		if upstreamID == "" {
 			upstreamID = resp.Header.Get("X-Request-ID")
 		}
-		return parsed, resp.StatusCode, upstreamID, nil
+		return parsed, resp.Header.Clone(), resp.StatusCode, upstreamID, nil
 	}
-	return nil, 0, "", lastErr
+	return nil, nil, 0, "", lastErr
 }
 
-func buildURL(endpoint string, query map[string]string, consts map[string]string, defaults map[string]any, input map[string]any) (string, error) {
+func buildURL(endpoint string, query map[string]string, defaults map[string]any, input map[string]any) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("invalid endpoint")
@@ -460,11 +477,63 @@ func buildURL(endpoint string, query map[string]string, consts map[string]string
 			}
 		}
 	}
-	for key, value := range consts {
-		q.Set(key, value)
-	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+func mergeQuery(query map[string]string, consts map[string]string) map[string]string {
+	if len(query) == 0 && len(consts) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(query)+len(consts))
+	for key, value := range query {
+		merged[key] = value
+	}
+	for key, value := range consts {
+		merged[key] = value
+	}
+	return merged
+}
+
+func mapUpstreamHTTPError(spec *ResponseSpec, body []byte, status int) *ExecutionError {
+	fallback := &ExecutionError{
+		Code:       "upstream_http_" + strconv.Itoa(status),
+		Message:    "upstream returned HTTP " + strconv.Itoa(status),
+		HTTPStatus: http.StatusBadGateway,
+		LogCode:    "upstream_http_" + strconv.Itoa(status),
+	}
+	if spec == nil || len(spec.ErrorMap) == 0 {
+		return fallback
+	}
+	var parsed map[string]any
+	if err := common.Unmarshal(body, &parsed); err == nil && parsed != nil {
+		if strings.TrimSpace(spec.ErrorCodePath) != "" {
+			if value, ok := Lookup(parsed, spec.ErrorCodePath); ok {
+				if code, ok := StringValue(value); ok {
+					if mapping, ok := spec.ErrorMap[code]; ok {
+						return executionErrorFromMapping(mapping)
+					}
+				}
+			}
+		}
+	}
+	if mapping, ok := spec.ErrorMap[strconv.Itoa(status)]; ok {
+		return executionErrorFromMapping(mapping)
+	}
+	return fallback
+}
+
+func executionErrorFromMapping(mapping ErrorMapSpec) *ExecutionError {
+	logCode := strings.TrimSpace(mapping.LogCode)
+	if logCode == "" {
+		logCode = "upstream_error_mapped"
+	}
+	return &ExecutionError{
+		Code:       mapping.Code,
+		Message:    mapping.Message,
+		HTTPStatus: mapping.HTTPStatus,
+		LogCode:    logCode,
+	}
 }
 
 func resolveValue(path string, defaults map[string]any, input map[string]any, field string) (any, bool) {
@@ -485,6 +554,12 @@ func isEmptyInputValue(value any) bool {
 	}
 	if text, ok := value.(string); ok {
 		return strings.TrimSpace(text) == ""
+	}
+	switch typed := value.(type) {
+	case []any:
+		return len(typed) == 0
+	case map[string]any:
+		return len(typed) == 0
 	}
 	return false
 }
