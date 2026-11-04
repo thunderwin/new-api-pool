@@ -419,9 +419,21 @@ Capability 任务写入现有 `tasks` 表，`platform = "capability"`。
 - Premium domains 的单价 Bright Data 未公开，按控制台显示为准。
 - 经 `web-unlock-v1` 和 ericBot 网关的端到端调用尚待一次实际使用验证。
 
-## 线上实测（`web-search-v1`）
+## 线上实测（2026-11-04，`web-search-v1`）
 
-> 待 2026-11-04 本次发布完成后填写；当前只完成本地 mock 上游离线验证。
+- 发布提交 `6d41c905`（后续秘密脚本兼容修复为 `86319b28`）；二进制 SHA-256
+  `092ca2eaf2a4d4255668427e8f22c11accc6f338a72d1652cbddd2ff6fafdf69`，
+  服务器主机与容器内 `/new-api` 一致。
+- 公开 `/api/status` 返回 200；`new-api-app` 为 healthy；近 10 分钟启动错误摘要为 0。
+- `.env` 中 `CAPABILITY_DEEPSEEK_API_KEY` 的名称计数为 1，容器内检查结果为“已设置”，
+  未读取或输出值。
+- 后端容器使用自身 `$CAPABILITY_DEEPSEEK_API_KEY` 直连 DeepSeek Search：
+  `query: "OpenAI API pricing"`、`count: 3` → HTTP 200，结果 3 条。该冒烟不经过中转站计费。
+- 未带 token 调 `POST /v1/capabilities/web-search-v1` 返回 401；未带 token 调
+  `GET /v1/capabilities` 同样返回 401。按本次约束没有查找任何用户 token，
+  因此带鉴权的目录读取和真实用户端到端扣费调用留给维护者从客户端完成。
+- 同一二进制包含 `web-search-v1` 嵌入 Manifest；离线测试确认嵌入 Manifest 总数 20，
+  且 `GET /v1/capabilities` 的目录生成路径包含该能力及其 `per_call` 定价。
 
 ## 仍未实现（下一步）
 

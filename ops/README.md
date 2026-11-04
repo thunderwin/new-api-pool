@@ -43,6 +43,11 @@ scp new-api-linux-amd64 ops/deploy/{Dockerfile,docker-compose.yml,Caddyfile,gen-
 ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker compose build && docker compose up -d'
 ```
 
+最近一次 Capability 发布记录（2026-11-04，DeepSeek `web-search-v1`、备份路径、
+二进制与 compose 哈希、健康/冒烟结果）见
+[`../docs-pool/03-deployment/tokwork-nbg1.md`](../docs-pool/03-deployment/tokwork-nbg1.md)
+的 §8.1。
+
 ## 三个必须知道的约束
 
 1. **`main.go` 里有 `//go:embed web/dist`** —— 编后端之前**必须先构建前端**，否则 `go build` 直接失败。

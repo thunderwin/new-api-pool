@@ -327,7 +327,7 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 > 并加了 [`ops/README.md`](../../ops/README.md) 说明它与 `deploy/` 蓝图的分工。
 > 早期 DigitalOcean 试机的 cloud-init 已删除（那台机器早已销毁，留着只会误导）。
 
-### 8.1 `web-unlock-v1` 部署与回滚
+### 8.1 Capability 部署与回滚
 
 **已核实 2026-10-23 的流程：**
 
@@ -418,6 +418,28 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | AISA 余额 | `$0.713672 → $0.701402` |
 | 每日对账 | 10-29 上游 `$0.242598`，日志 `$0.242598`，差额 `$0.000000` |
 | 对账脚本 | `reconcile-capability-aisa.py` 已上传到 `/opt/new-api-pool/`；API 进程另有每日自动任务 |
+| 回滚 | 未触发 |
+
+#### 2026-11-04 发布 DeepSeek `web-search-v1`
+
+> 以下为已核实事实。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `6d41c905`；秘密脚本无结尾换行兼容修复 `86319b28` |
+| 开始时间 | `2026-11-04T03:21:39Z` |
+| 重建窗口 | `2026-11-04T03:23:10Z` → `2026-11-04T03:23:21Z` |
+| 二进制 SHA-256 | `092ca2eaf2a4d4255668427e8f22c11accc6f338a72d1652cbddd2ff6fafdf69` |
+| 容器内 `/new-api` SHA-256 | 与服务器主机二进制相同 |
+| compose SHA-256 | `94629476df7e4eba8413fd85e7442a658be9c7b390426fbc7fabd82ac180d6fd` |
+| 回滚备份 | `new-api.bak-20261104-032139`、`docker-compose.yml.bak-20261104-032139`、`.env.bak-20261104-032139` |
+| 密钥写入前备份 | `.env.bak-capability-20261104032228` |
+| 密钥 | `.env` 中 `CAPABILITY_DEEPSEEK_API_KEY` 名称计数 1；容器内为“已设置”，未读取或输出值 |
+| 健康 | 公开 `/api/status` 200；`new-api-app` healthy；近 10 分钟启动错误摘要 0 |
+| 上游冒烟 | 容器内使用自身 `$CAPABILITY_DEEPSEEK_API_KEY` 搜索 `OpenAI API pricing`（`count: 3`）→ HTTP 200，结果 3 条；不经过中转站计费 |
+| 路由鉴权 | 未带 token 的 `POST /v1/capabilities/web-search-v1` → 401；`GET /v1/capabilities` 同样要求鉴权，带上鉴权前也返回 401 |
+| 能力目录 | 同一二进制嵌入 `web-search-v1`；离线 Manifest 加载测试为 20 个。按约束未查找用户 token，未执行带鉴权线上目录读取 |
+| 用户端到端 | 未执行；维护者稍后从客户端使用真实用户 token 验证 |
 | 回滚 | 未触发 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
