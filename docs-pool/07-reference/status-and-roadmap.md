@@ -1,6 +1,6 @@
 # 当前进度与后续规划
 
-> 号池主体截至 **2026-04-28**；Capability 补充核实于 **2026-10-23**。
+> 号池主体截至 **2026-04-28**；Capability 补充核实于 **2026-11-04**。
 > 这个文档**每次发版都要更新**。看这一页 = 知道现在能做什么、还差什么、下一步做什么。
 
 ---
@@ -88,13 +88,18 @@
   - 08-security（凭证 / 暴露面 / 应急响应）
   - 09-contributing（commit / PR / 风格）
 
-### 2.10 第三方 Capability（2026-10-23）
+### 2.10 第三方 Capability（2026-11-04）
 
-- [x] 同步 JSON：`weather-v1`、`web-unlock-v1`
+- [x] 同步 JSON：`weather-v1`、`web-unlock-v1`、16 个 AISA 搜索/SEO 能力、
+  `web-search-v1`
 - [x] 异步任务：`ssl-analyze-v1`
 - [x] 异步 per-unit 预估/差额结算与 `/v1/tasks/{id}/content`
 - [x] Manifest 必填字段、URL allowlist、常量/环境变量 body 覆盖、业务成功条件
 - [x] Bright Data Web Unlocker 仅开放 Wayfair HTTPS 域名；目标非 200/空正文失败退款
+- [x] AISA 按上游实际响应成本结算；付费调用断开后继续完成，失败/未知结果按安全规则结算
+- [x] DeepSeek Search `web-search-v1`：$0.001/次，`count` 默认 8、上限 20，
+  固定 `need_content=false`，输出不含全文；空结果成功且免费
+- [x] 通用 Manifest：数值范围、原生类型常量、对象数组字段投影、声明式空结果免费
 - [ ] 多供应商路由、后台 Manifest 编辑、SSE 流式仍是计划
 
 ---
