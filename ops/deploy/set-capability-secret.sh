@@ -128,7 +128,15 @@ fi
 set +x
 capability_key=""
 trap 'unset capability_key' EXIT
-read -r -s -p "$secret_name: " capability_key
+# A redirected file may end at EOF without a trailing newline. `read` assigns
+# the value but returns non-zero in that case, so do not let `set -e` abort.
+if ! IFS= read -r -s -p "$secret_name: " capability_key; then
+	if [[ -z "$capability_key" ]]; then
+		printf '\n'
+		echo "未设置"
+		exit 1
+	fi
+fi
 printf '\n'
 if [[ -z "$capability_key" ]]; then
 	echo "未设置"
