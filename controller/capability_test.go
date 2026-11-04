@@ -178,6 +178,344 @@ func TestExecuteCapabilityChargesPerCall(t *testing.T) {
 	}
 }
 
+func cloneWebSearchControllerManifest(t *testing.T, id string, endpoint string) *capability.Manifest {
+	t.Helper()
+	embedded, ok := capability.Get("web-search-v1")
+	if !ok {
+		t.Fatal("web-search-v1 manifest is missing")
+	}
+	raw, err := common.Marshal(embedded)
+	if err != nil {
+		t.Fatalf("clone web-search-v1: %v", err)
+	}
+	var manifest capability.Manifest
+	if err := common.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("clone web-search-v1: %v", err)
+	}
+	manifest.ID = id
+	manifest.Endpoint = endpoint
+	return &manifest
+}
+
+func enableCapabilityConsumeLogs(t *testing.T) {
+	t.Helper()
+	oldLogConsume := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	oldBatchUpdate := common.BatchUpdateEnabled
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() { common.LogConsumeEnabled = oldLogConsume })
+	t.Cleanup(func() { common.BatchUpdateEnabled = oldBatchUpdate })
+}
+
+func TestWebSearchChargesOnceAndDropsContent(t *testing.T) {
+	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+	enableCapabilityConsumeLogs(t)
+	db := setupCapabilityControllerTestDB(t)
+	user, token := seedCapabilityUserAndToken(t, db)
+
+	var receivedBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if err := common.Unmarshal(raw, &receivedBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "deepseek-search-success")
+		_, _ = w.Write([]byte(`{"results":[{"title":"OpenAI pricing","url":"https://openai.com/api/pricing","snippet":"Short summary","summary":"Long model-readable summary","content":"full page content must not leak","site_name":"OpenAI","date":"2026-11-04T00:00:00Z","rerank_score":2.8,"authority":4}]}`))
+	}))
+	defer upstream.Close()
+
+	manifest := cloneWebSearchControllerManifest(t, "web-search-success-api-v1", upstream.URL)
+	registerWebUnlockTestManifest(t, manifest)
+	ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+		"input": map[string]any{
+			"query":        "OpenAI API pricing",
+			"need_content": true,
+		},
+	}, user, token)
+	ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+	ExecuteCapability(ctx)
+
+	var response struct {
+		Success           bool           `json:"success"`
+		Output            map[string]any `json:"output"`
+		CostUSD           float64        `json:"cost_usd"`
+		ProviderRequestID string         `json:"provider_request_id"`
+		ErrorCode         string         `json:"error_code"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != http.StatusOK || !response.Success || response.CostUSD != 0.001 ||
+		response.ProviderRequestID != "deepseek-search-success" {
+		t.Fatalf("unexpected search response: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	results, ok := response.Output["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("unexpected results: %#v", response.Output)
+	}
+	item, ok := results[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result item: %#v", results[0])
+	}
+	if item["title"] != "OpenAI pricing" || item["summary"] != "Long model-readable summary" ||
+		item["site_name"] != "OpenAI" || item["date"] != "2026-11-04T00:00:00Z" {
+		t.Fatalf("declared fields were not preserved: %#v", item)
+	}
+	for _, excluded := range []string{"content", "rerank_score", "authority"} {
+		if _, exists := item[excluded]; exists {
+			t.Fatalf("undeclared field %s leaked into output: %#v", excluded, item)
+		}
+	}
+	if receivedBody["query"] != "OpenAI API pricing" ||
+		receivedBody["count"] != float64(8) ||
+		receivedBody["need_content"] != false {
+		t.Fatalf("unexpected upstream request: %#v", receivedBody)
+	}
+	var fresh model.User
+	if err := db.First(&fresh, user.Id).Error; err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	chargedQuota := int(math.Round(0.001 * common.QuotaPerUnit))
+	if fresh.Quota != user.Quota-chargedQuota {
+		t.Fatalf("expected one charge of %d, got %d", chargedQuota, user.Quota-fresh.Quota)
+	}
+	log := latestCapabilityLog(t, db, manifest.ID)
+	if log.Quota != chargedQuota {
+		t.Fatalf("unexpected consume log quota: %d", log.Quota)
+	}
+}
+
+func TestWebSearchEmptyResultsSucceedWithoutCharge(t *testing.T) {
+	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+	enableCapabilityConsumeLogs(t)
+	db := setupCapabilityControllerTestDB(t)
+	user, token := seedCapabilityUserAndToken(t, db)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "deepseek-search-empty")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer upstream.Close()
+
+	manifest := cloneWebSearchControllerManifest(t, "web-search-empty-api-v1", upstream.URL)
+	registerWebUnlockTestManifest(t, manifest)
+	ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+		"input": map[string]any{"query": "query with no results"},
+	}, user, token)
+	ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+	ExecuteCapability(ctx)
+
+	var response struct {
+		Success bool           `json:"success"`
+		Output  map[string]any `json:"output"`
+		CostUSD float64        `json:"cost_usd"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	results, ok := response.Output["results"].([]any)
+	if recorder.Code != http.StatusOK || !response.Success || response.CostUSD != 0 || !ok || len(results) != 0 {
+		t.Fatalf("empty result must succeed for free: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var fresh model.User
+	if err := db.First(&fresh, user.Id).Error; err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	if fresh.Quota != user.Quota {
+		t.Fatalf("empty result changed quota from %d to %d", user.Quota, fresh.Quota)
+	}
+	log := latestCapabilityLog(t, db, manifest.ID)
+	var other map[string]any
+	if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+		t.Fatalf("decode consume log: %v", err)
+	}
+	if log.Quota != 0 || other["status"] != "succeeded" || other["usage_source"] != "empty_response" ||
+		other["usage_quantity"] != float64(0) {
+		t.Fatalf("unexpected empty-result consume log: quota=%d other=%s", log.Quota, log.Other)
+	}
+}
+
+func TestWebSearchUpstreamErrorsAreMappedAndRefunded(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		wantStatus int
+		wantCode   string
+		wantLog    string
+		wantCalls  int32
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, wantStatus: http.StatusServiceUnavailable, wantCode: "upstream_unavailable", wantLog: "upstream_authentication", wantCalls: 1},
+		{name: "balance", status: http.StatusPaymentRequired, wantStatus: http.StatusServiceUnavailable, wantCode: "upstream_unavailable", wantLog: "upstream_balance_unavailable", wantCalls: 1},
+		{name: "bad request", status: http.StatusBadRequest, wantStatus: http.StatusBadRequest, wantCode: "invalid_request", wantLog: "upstream_invalid_request", wantCalls: 1},
+		{name: "too large", status: http.StatusRequestEntityTooLarge, wantStatus: http.StatusBadRequest, wantCode: "invalid_request", wantLog: "upstream_request_too_large", wantCalls: 1},
+		{name: "read timeout", status: http.StatusRequestTimeout, wantStatus: http.StatusGatewayTimeout, wantCode: "upstream_timeout", wantLog: "upstream_read_timeout", wantCalls: 2},
+		{name: "rate limited", status: http.StatusTooManyRequests, wantStatus: http.StatusTooManyRequests, wantCode: "upstream_rate_limited", wantLog: "upstream_rate_limited", wantCalls: 2},
+		{name: "provider error", status: http.StatusInternalServerError, wantStatus: http.StatusServiceUnavailable, wantCode: "upstream_unavailable", wantLog: "upstream_provider_failure", wantCalls: 2},
+		{name: "provider bad gateway", status: http.StatusBadGateway, wantStatus: http.StatusServiceUnavailable, wantCode: "upstream_unavailable", wantLog: "upstream_provider_failure", wantCalls: 2},
+		{name: "provider unavailable", status: http.StatusServiceUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "upstream_unavailable", wantLog: "upstream_unavailable", wantCalls: 2},
+		{name: "downstream timeout", status: http.StatusGatewayTimeout, wantStatus: http.StatusGatewayTimeout, wantCode: "upstream_timeout", wantLog: "upstream_downstream_timeout", wantCalls: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+			t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+			t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+			enableCapabilityConsumeLogs(t)
+			db := setupCapabilityControllerTestDB(t)
+			user, token := seedCapabilityUserAndToken(t, db)
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"error":{"code":"provider_error","message":"secret upstream detail"}}`))
+			}))
+			defer upstream.Close()
+
+			id := "web-search-error-" + strings.ReplaceAll(test.name, " ", "-") + "-v1"
+			manifest := cloneWebSearchControllerManifest(t, id, upstream.URL)
+			registerWebUnlockTestManifest(t, manifest)
+			ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+				"input": map[string]any{"query": "OpenAI API pricing"},
+			}, user, token)
+			ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+			ExecuteCapability(ctx)
+
+			var response struct {
+				ErrorCode string `json:"error_code"`
+			}
+			if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if recorder.Code != test.wantStatus || response.ErrorCode != test.wantCode ||
+				calls.Load() != test.wantCalls {
+				t.Fatalf("unexpected error response: code=%d calls=%d body=%s",
+					recorder.Code, calls.Load(), recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "secret upstream detail") {
+				t.Fatalf("upstream error body leaked: %s", recorder.Body.String())
+			}
+			waitForCapabilityQuota(t, db, user.Id, user.Quota)
+			log := latestCapabilityLog(t, db, manifest.ID)
+			var other map[string]any
+			if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+				t.Fatalf("decode consume log: %v", err)
+			}
+			if log.Quota != 0 || other["upstream_error_code"] != test.wantLog {
+				t.Fatalf("unexpected failed-search log: quota=%d other=%s", log.Quota, log.Other)
+			}
+		})
+	}
+}
+
+func TestWebSearchPreflightAndCredentialFailuresDoNotCallOrCharge(t *testing.T) {
+	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+	db := setupCapabilityControllerTestDB(t)
+	user, token := seedCapabilityUserAndToken(t, db)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer upstream.Close()
+
+	manifest := cloneWebSearchControllerManifest(t, "web-search-preflight-api-v1", upstream.URL)
+	registerWebUnlockTestManifest(t, manifest)
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+	tests := []struct {
+		name  string
+		input map[string]any
+	}{
+		{name: "missing query", input: map[string]any{}},
+		{name: "blank query", input: map[string]any{"query": "   "}},
+		{name: "zero count", input: map[string]any{"query": "valid", "count": 0}},
+		{name: "count over limit", input: map[string]any{"query": "valid", "count": 21}},
+		{name: "fractional count", input: map[string]any{"query": "valid", "count": 1.5}},
+		{name: "string count", input: map[string]any{"query": "valid", "count": "8"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+				"input": test.input,
+			}, user, token)
+			ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+			ExecuteCapability(ctx)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("unexpected preflight response: code=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "")
+	ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+		"input": map[string]any{"query": "valid"},
+	}, user, token)
+	ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+	ExecuteCapability(ctx)
+	var response struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != http.StatusInternalServerError || response.ErrorCode != "credential_error" {
+		t.Fatalf("unexpected credential response: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("preflight or credential failure called upstream %d times", calls.Load())
+	}
+	var fresh model.User
+	if err := db.First(&fresh, user.Id).Error; err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	if fresh.Quota != user.Quota {
+		t.Fatalf("preflight or credential failure changed quota from %d to %d", user.Quota, fresh.Quota)
+	}
+}
+
+func TestEmptyResponseWithoutEmptyOKStillFailsAndRefunds(t *testing.T) {
+	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
+	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+	db := setupCapabilityControllerTestDB(t)
+	user, token := seedCapabilityUserAndToken(t, db)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer upstream.Close()
+
+	manifest := cloneWebSearchControllerManifest(t, "web-search-legacy-empty-api-v1", upstream.URL)
+	manifest.Response.Success.EmptyOK = false
+	registerWebUnlockTestManifest(t, manifest)
+	ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
+		"input": map[string]any{"query": "valid"},
+	}, user, token)
+	ctx.Params = gin.Params{{Key: "capability", Value: manifest.ID}}
+	ExecuteCapability(ctx)
+	var response struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != http.StatusBadGateway || response.ErrorCode != "upstream_empty_body" {
+		t.Fatalf("legacy empty response behavior changed: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	waitForCapabilityQuota(t, db, user.Id, user.Quota)
+}
+
 func TestSubmitAndPollCapabilityTaskIdempotently(t *testing.T) {
 	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
 	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
@@ -399,7 +737,7 @@ func newWebUnlockTestManifest(endpoint string) *capability.Manifest {
 				"zone":   "$.input.zone",
 				"format": "$.input.format",
 			},
-			Consts: map[string]string{"format": "json"},
+			Consts: map[string]any{"format": "json"},
 			Env:    map[string]string{"zone": "CAPABILITY_TEST_ZONE"},
 		},
 		Response: &capability.ResponseSpec{

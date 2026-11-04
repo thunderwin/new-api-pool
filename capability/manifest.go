@@ -2,6 +2,7 @@ package capability
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -50,10 +51,17 @@ type RequestSpec struct {
 	BodyWrap    string                  `json:"body_wrap,omitempty"`
 	Headers     map[string]string       `json:"headers,omitempty"`
 	Defaults    map[string]any          `json:"defaults,omitempty"`
-	Consts      map[string]string       `json:"consts,omitempty"`
+	Consts      map[string]any          `json:"consts,omitempty"`
 	Env         map[string]string       `json:"env,omitempty"`
 	Required    []string                `json:"required,omitempty"`
+	Ranges      map[string]RangeSpec    `json:"ranges,omitempty"`
 	URLInputs   map[string]URLInputSpec `json:"url_inputs,omitempty"`
+}
+
+type RangeSpec struct {
+	Min     *float64 `json:"min,omitempty"`
+	Max     *float64 `json:"max,omitempty"`
+	Integer bool     `json:"integer,omitempty"`
 }
 
 type URLInputSpec struct {
@@ -67,7 +75,7 @@ type SubmitSpec struct {
 	Query     map[string]string `json:"query,omitempty"`
 	Body      map[string]string `json:"body,omitempty"`
 	Defaults  map[string]any    `json:"defaults,omitempty"`
-	Consts    map[string]string `json:"consts,omitempty"`
+	Consts    map[string]any    `json:"consts,omitempty"`
 	JobIDPath string            `json:"job_id_path"`
 }
 
@@ -78,7 +86,7 @@ type PollSpec struct {
 	Query         map[string]string `json:"query,omitempty"`
 	Body          map[string]string `json:"body,omitempty"`
 	Defaults      map[string]any    `json:"defaults,omitempty"`
-	Consts        map[string]string `json:"consts,omitempty"`
+	Consts        map[string]any    `json:"consts,omitempty"`
 	StatusPath    string            `json:"status_path"`
 	SuccessValues []string          `json:"success_values"`
 	FailureValues []string          `json:"failure_values"`
@@ -91,16 +99,22 @@ type ContentSpec struct {
 	Method   string            `json:"method"`
 	Auth     *AuthSpec         `json:"auth,omitempty"`
 	Query    map[string]string `json:"query,omitempty"`
-	Consts   map[string]string `json:"consts,omitempty"`
+	Consts   map[string]any    `json:"consts,omitempty"`
 }
 
 type ResponseSpec struct {
-	Output        map[string]string       `json:"output"`
-	Success       *SuccessSpec            `json:"success,omitempty"`
-	StatusHeader  string                  `json:"status_header,omitempty"`
-	ErrorHeader   string                  `json:"error_header,omitempty"`
-	ErrorCodePath string                  `json:"error_code_path,omitempty"`
-	ErrorMap      map[string]ErrorMapSpec `json:"error_map,omitempty"`
+	Output        map[string]string         `json:"output"`
+	Collections   map[string]CollectionSpec `json:"collections,omitempty"`
+	Success       *SuccessSpec              `json:"success,omitempty"`
+	StatusHeader  string                    `json:"status_header,omitempty"`
+	ErrorHeader   string                    `json:"error_header,omitempty"`
+	ErrorCodePath string                    `json:"error_code_path,omitempty"`
+	ErrorMap      map[string]ErrorMapSpec   `json:"error_map,omitempty"`
+}
+
+type CollectionSpec struct {
+	Path   string   `json:"path"`
+	Fields []string `json:"fields"`
 }
 
 type ErrorMapSpec struct {
@@ -114,6 +128,7 @@ type SuccessSpec struct {
 	Path        string `json:"path,omitempty"`
 	Values      []any  `json:"values,omitempty"`
 	NonEmpty    string `json:"non_empty,omitempty"`
+	EmptyOK     bool   `json:"empty_ok,omitempty"`
 	FailureCode string `json:"failure_code,omitempty"`
 	EmptyCode   string `json:"empty_code,omitempty"`
 }
@@ -209,8 +224,8 @@ func (m *Manifest) Validate() error {
 		if strings.TrimSpace(m.Endpoint) == "" {
 			return fmt.Errorf("manifest %s: sync endpoint is required", m.ID)
 		}
-		if m.Response == nil || len(m.Response.Output) == 0 {
-			return fmt.Errorf("manifest %s: sync response.output is required", m.ID)
+		if m.Response == nil || (len(m.Response.Output) == 0 && len(m.Response.Collections) == 0) {
+			return fmt.Errorf("manifest %s: sync response.output or response.collections is required", m.ID)
 		}
 		if m.Request != nil {
 			for _, field := range m.Request.Required {
@@ -241,6 +256,23 @@ func (m *Manifest) Validate() error {
 					}
 				}
 			}
+			for field, spec := range m.Request.Ranges {
+				if strings.TrimSpace(field) == "" {
+					return fmt.Errorf("manifest %s: request.ranges contains an empty field", m.ID)
+				}
+				if spec.Min == nil && spec.Max == nil {
+					return fmt.Errorf("manifest %s: request.ranges.%s requires min or max", m.ID, field)
+				}
+				if spec.Min != nil && (math.IsNaN(*spec.Min) || math.IsInf(*spec.Min, 0)) {
+					return fmt.Errorf("manifest %s: request.ranges.%s.min is invalid", m.ID, field)
+				}
+				if spec.Max != nil && (math.IsNaN(*spec.Max) || math.IsInf(*spec.Max, 0)) {
+					return fmt.Errorf("manifest %s: request.ranges.%s.max is invalid", m.ID, field)
+				}
+				if spec.Min != nil && spec.Max != nil && *spec.Min > *spec.Max {
+					return fmt.Errorf("manifest %s: request.ranges.%s.min exceeds max", m.ID, field)
+				}
+			}
 		}
 		if m.Response.Success != nil {
 			success := m.Response.Success
@@ -249,6 +281,27 @@ func (m *Manifest) Validate() error {
 			}
 			if strings.TrimSpace(success.Path) != "" && len(success.Values) == 0 {
 				return fmt.Errorf("manifest %s: response.success.path requires values", m.ID)
+			}
+			if success.EmptyOK && strings.TrimSpace(success.NonEmpty) == "" {
+				return fmt.Errorf("manifest %s: response.success.empty_ok requires non_empty", m.ID)
+			}
+		}
+		for key, spec := range m.Response.Collections {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" || len(spec.Fields) == 0 {
+				return fmt.Errorf("manifest %s: response.collections.%s requires path and fields", m.ID, key)
+			}
+			if _, exists := m.Response.Output[key]; exists {
+				return fmt.Errorf("manifest %s: response output key %s is declared twice", m.ID, key)
+			}
+			seen := map[string]struct{}{}
+			for _, field := range spec.Fields {
+				if strings.TrimSpace(field) == "" {
+					return fmt.Errorf("manifest %s: response.collections.%s contains an empty field", m.ID, key)
+				}
+				if _, exists := seen[field]; exists {
+					return fmt.Errorf("manifest %s: response.collections.%s contains duplicate field %s", m.ID, key, field)
+				}
+				seen[field] = struct{}{}
 			}
 		}
 		for key, mapping := range m.Response.ErrorMap {
@@ -311,6 +364,16 @@ func (m *Manifest) Timeout() (time.Duration, error) {
 		return 0, fmt.Errorf("timeout must be between 1s and 10m")
 	}
 	return d, nil
+}
+
+// EmptyResponse reports whether a declared response success path is empty and
+// the manifest explicitly allows that empty value as a successful result.
+func (s *SuccessSpec) EmptyResponse(raw map[string]any) bool {
+	if s == nil || !s.EmptyOK || strings.TrimSpace(s.NonEmpty) == "" {
+		return false
+	}
+	value, ok := Lookup(raw, s.NonEmpty)
+	return !ok || !isNonEmptyResponseValue(value)
 }
 
 // Lookup resolves a simple JSON path such as $.input.latitude or $.endpoints.

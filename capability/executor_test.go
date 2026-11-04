@@ -494,6 +494,132 @@ func TestEmbeddedAISAManifests(t *testing.T) {
 	}
 }
 
+func TestDeepSeekWebSearchManifestContract(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	t.Setenv("CAPABILITY_DEEPSEEK_API_KEY", "test-deepseek-key")
+
+	embedded, ok := Get("web-search-v1")
+	if !ok {
+		t.Fatal("web-search-v1 manifest is missing")
+	}
+	if err := embedded.Validate(); err != nil {
+		t.Fatalf("web-search-v1 should validate: %v", err)
+	}
+	if embedded.Provider != "deepseek" || embedded.Mode != ModeSync ||
+		embedded.Billing.Type != BillingPerCall || embedded.Billing.PriceUSD != 0.001 ||
+		embedded.Limits.Timeout != "30s" || embedded.Limits.MaxResponseBytes != 2*1024*1024 ||
+		embedded.Retry.Attempts != 2 ||
+		embedded.Response == nil || embedded.Response.Success == nil ||
+		!embedded.Response.Success.EmptyOK ||
+		embedded.Auth == nil || embedded.Auth.SecretRef != "CAPABILITY_DEEPSEEK_API_KEY" {
+		t.Fatalf("unexpected web-search-v1 contract: %#v", embedded)
+	}
+	for _, status := range []int{408, 429, 500, 502, 503, 504} {
+		if !containsInt(embedded.Retry.RetryOn, status) {
+			t.Fatalf("web-search-v1 must retry HTTP %d", status)
+		}
+	}
+	if needContent, ok := embedded.Request.Consts["need_content"].(bool); !ok || needContent {
+		t.Fatalf("need_content must be a boolean false constant: %#v", embedded.Request.Consts["need_content"])
+	}
+	countRange := embedded.Request.Ranges["count"]
+	if countRange.Min == nil || *countRange.Min != 1 ||
+		countRange.Max == nil || *countRange.Max != 20 || !countRange.Integer {
+		t.Fatalf("unexpected count range: %#v", countRange)
+	}
+	if execErr := ValidateSync(embedded, map[string]any{"query": "OpenAI API pricing"}); execErr != nil {
+		t.Fatalf("default count should satisfy validation: %v", execErr)
+	}
+	for _, invalidCount := range []any{0, 21, 1.5, "8"} {
+		if execErr := ValidateSync(embedded, map[string]any{
+			"query": "OpenAI API pricing",
+			"count": invalidCount,
+		}); execErr == nil || execErr.Code != "invalid_request" {
+			t.Fatalf("count %#v should be rejected, got %#v", invalidCount, execErr)
+		}
+	}
+
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-deepseek-key" {
+			t.Errorf("unexpected authorization header")
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if err := common.Unmarshal(raw, &received); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"Result","url":"https://example.com","snippet":"Short","summary":"Long","content":"must-not-leak","site_name":"Example","date":"2026-11-04T00:00:00Z","rerank_score":2.5,"authority":3}]}`))
+	}))
+	defer server.Close()
+
+	manifest := *embedded
+	manifest.ID = "web-search-contract-test-v1"
+	manifest.Endpoint = server.URL
+	result, execErr := ExecuteSync(context.Background(), &manifest, map[string]any{
+		"query":        "OpenAI API pricing",
+		"need_content": true,
+	}, "")
+	if execErr != nil {
+		t.Fatalf("ExecuteSync failed: %v", execErr)
+	}
+	if received["query"] != "OpenAI API pricing" || received["count"] != float64(8) ||
+		received["need_content"] != false {
+		t.Fatalf("unexpected upstream body: %#v", received)
+	}
+	results, ok := result.Output["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("unexpected projected results: %#v", result.Output["results"])
+	}
+	item, ok := results[0].(map[string]any)
+	if !ok || item["title"] != "Result" || item["summary"] != "Long" {
+		t.Fatalf("unexpected projected item: %#v", results[0])
+	}
+	for _, excluded := range []string{"content", "rerank_score", "authority"} {
+		if _, exists := item[excluded]; exists {
+			t.Fatalf("undeclared field %s leaked into output: %#v", excluded, item)
+		}
+	}
+}
+
+func TestEmptyOKMakesEmptyResponseSuccessfulWithoutChangingLegacyDefault(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	embedded, ok := Get("web-search-v1")
+	if !ok {
+		t.Fatal("web-search-v1 manifest is missing")
+	}
+	manifest := *embedded
+	manifest.ID = "empty-ok-test-v1"
+	manifest.Endpoint = server.URL
+	manifest.Auth = nil
+	result, execErr := ExecuteSync(context.Background(), &manifest, map[string]any{"query": "no matches"}, "")
+	if execErr != nil {
+		t.Fatalf("empty_ok response should succeed: %v", execErr)
+	}
+	results, ok := result.Output["results"].([]any)
+	if !ok || len(results) != 0 {
+		t.Fatalf("empty results were not preserved: %#v", result.Output)
+	}
+	if !manifest.Response.Success.EmptyResponse(result.Raw) {
+		t.Fatal("empty response was not detected")
+	}
+
+	legacySuccess := *manifest.Response.Success
+	legacySuccess.EmptyOK = false
+	if err := validateResponseSuccess(&legacySuccess, result.Raw); err == nil || err.Code != "upstream_empty_body" {
+		t.Fatalf("undeclared empty_ok must retain legacy failure, got %#v", err)
+	}
+}
+
 func TestManifestFileIDsAreUnique(t *testing.T) {
 	paths, err := fs.Glob(manifestFS, "manifests/*.json")
 	if err != nil {
@@ -514,8 +640,8 @@ func TestManifestFileIDsAreUnique(t *testing.T) {
 		}
 		ids[manifest.ID] = path
 	}
-	if len(ids) != 19 {
-		t.Fatalf("expected 19 embedded manifests, got %d", len(ids))
+	if len(ids) != 20 {
+		t.Fatalf("expected 20 embedded manifests, got %d", len(ids))
 	}
 }
 
@@ -553,6 +679,22 @@ func TestManifestRejectsUnsafeRequestExtensions(t *testing.T) {
 		{name: "negative reserve", mutate: func(m *Manifest) { m.Billing.ReserveUSD = -1 }},
 		{name: "invalid error map status", mutate: func(m *Manifest) {
 			m.Response.ErrorMap = map[string]ErrorMapSpec{"402": {Code: "x", HTTPStatus: 200, Message: "x"}}
+		}},
+		{name: "range without bounds", mutate: func(m *Manifest) {
+			m.Request.Ranges = map[string]RangeSpec{"count": {}}
+		}},
+		{name: "range with inverted bounds", mutate: func(m *Manifest) {
+			minimum := 10.0
+			maximum := 1.0
+			m.Request.Ranges = map[string]RangeSpec{"count": {Min: &minimum, Max: &maximum}}
+		}},
+		{name: "empty_ok without non_empty", mutate: func(m *Manifest) {
+			m.Response.Success = &SuccessSpec{EmptyOK: true}
+		}},
+		{name: "duplicate collection output", mutate: func(m *Manifest) {
+			m.Response.Collections = map[string]CollectionSpec{
+				"ok": {Path: "$.items", Fields: []string{"id"}},
+			}
 		}},
 	}
 	for _, test := range tests {
@@ -610,7 +752,7 @@ func TestDataForSEOArrayBodyStaticHeadersAndOutput(t *testing.T) {
 			Query:    map[string]string{"declared": "$.input.declared"},
 			Body:     map[string]string{"target": "$.input.target"},
 			BodyWrap: "array",
-			Consts:   map[string]string{"fixed": "only-in-body"},
+			Consts:   map[string]any{"fixed": "only-in-body"},
 			Headers:  map[string]string{"X-AISA-Max-Price-USD": "0.10"},
 		},
 		Response: &ResponseSpec{

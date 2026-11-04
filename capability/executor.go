@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -77,7 +78,7 @@ type httpSpec struct {
 	bodyWrap    string
 	headers     map[string]string
 	defaults    map[string]any
-	consts      map[string]string
+	consts      map[string]any
 	env         map[string]string
 	idempotency string
 }
@@ -103,14 +104,27 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 	}
 	if m.Request != nil {
 		for _, field := range m.Request.Required {
-			value, ok := input[field]
-			if !ok && m.Request.Defaults != nil {
-				value, ok = m.Request.Defaults[field]
-			}
+			value, ok := inputValueOrDefault(m.Request.Defaults, input, field)
 			if !ok || isEmptyInputValue(value) {
 				return &ExecutionError{
 					Code:       "invalid_request",
 					Message:    "a required input field is missing or empty",
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
+		for field, spec := range m.Request.Ranges {
+			value, ok := inputValueOrDefault(m.Request.Defaults, input, field)
+			if !ok {
+				continue
+			}
+			number, ok := requestNumberValue(value)
+			if !ok || (spec.Integer && math.Trunc(number) != number) ||
+				(spec.Min != nil && number < *spec.Min) ||
+				(spec.Max != nil && number > *spec.Max) {
+				return &ExecutionError{
+					Code:       "invalid_request",
+					Message:    "an input value is outside the allowed range",
 					HTTPStatus: http.StatusBadRequest,
 				}
 			}
@@ -165,6 +179,53 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 			}, m, statusCode, headers, raw, true, upstreamID)
 		}
 		output[key] = value
+	}
+	for key, spec := range m.Response.Collections {
+		value, ok := Lookup(raw, spec.Path)
+		if !ok {
+			if m.Response.Success.EmptyResponse(raw) && spec.Path == m.Response.Success.NonEmpty {
+				output[key] = []any{}
+				continue
+			}
+			return nil, attachResponseMetadata(&ExecutionError{
+				Code:       "missing_output_field",
+				Message:    "upstream response did not contain a required collection",
+				HTTPStatus: http.StatusBadGateway,
+			}, m, statusCode, headers, raw, true, upstreamID)
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return nil, attachResponseMetadata(&ExecutionError{
+				Code:       "invalid_output_field",
+				Message:    "upstream response collection has an invalid format",
+				HTTPStatus: http.StatusBadGateway,
+			}, m, statusCode, headers, raw, true, upstreamID)
+		}
+		projected := make([]any, 0, len(items))
+		for _, item := range items {
+			object, ok := item.(map[string]any)
+			if !ok {
+				return nil, attachResponseMetadata(&ExecutionError{
+					Code:       "invalid_output_field",
+					Message:    "upstream response collection item has an invalid format",
+					HTTPStatus: http.StatusBadGateway,
+				}, m, statusCode, headers, raw, true, upstreamID)
+			}
+			projectedItem := make(map[string]any, len(spec.Fields))
+			for _, field := range spec.Fields {
+				fieldValue, ok := object[field]
+				if !ok {
+					return nil, attachResponseMetadata(&ExecutionError{
+						Code:       "missing_output_field",
+						Message:    "upstream response did not contain a required field",
+						HTTPStatus: http.StatusBadGateway,
+					}, m, statusCode, headers, raw, true, upstreamID)
+				}
+				projectedItem[field] = fieldValue
+			}
+			projected = append(projected, projectedItem)
+		}
+		output[key] = projected
 	}
 	return &SyncResult{
 		Output:            output,
@@ -293,7 +354,11 @@ func FetchContent(ctx context.Context, m *Manifest, input map[string]any, jobID 
 	if err != nil {
 		return nil, "", &ExecutionError{Code: "invalid_timeout", Message: "capability timeout is invalid", HTTPStatus: http.StatusInternalServerError}
 	}
-	fullURL, err := buildURL(endpoint, mergeQuery(m.Content.Query, m.Content.Consts), nil, input)
+	query, err := mergeQuery(m.Content.Query, m.Content.Consts)
+	if err != nil {
+		return nil, "", &ExecutionError{Code: "invalid_request", Message: "content query is invalid", HTTPStatus: http.StatusBadRequest}
+	}
+	fullURL, err := buildURL(endpoint, query, nil, input)
 	if err != nil {
 		return nil, "", &ExecutionError{Code: "invalid_request", Message: "failed to build content URL", HTTPStatus: http.StatusBadRequest}
 	}
@@ -360,7 +425,10 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 
 	query := spec.query
 	if !strings.EqualFold(spec.method, http.MethodPost) {
-		query = mergeQuery(query, spec.consts)
+		query, err = mergeQuery(query, spec.consts)
+		if err != nil {
+			return nil, nil, 0, "", &ExecutionError{Code: "invalid_request", Message: "upstream query is invalid", HTTPStatus: http.StatusBadRequest}
+		}
 	}
 	endpoint, err := buildURL(spec.endpoint, query, spec.defaults, input)
 	if err != nil {
@@ -645,18 +713,22 @@ func buildURL(endpoint string, query map[string]string, defaults map[string]any,
 	return u.String(), nil
 }
 
-func mergeQuery(query map[string]string, consts map[string]string) map[string]string {
+func mergeQuery(query map[string]string, consts map[string]any) (map[string]string, error) {
 	if len(query) == 0 && len(consts) == 0 {
-		return nil
+		return nil, nil
 	}
 	merged := make(map[string]string, len(query)+len(consts))
 	for key, value := range query {
 		merged[key] = value
 	}
 	for key, value := range consts {
-		merged[key] = value
+		text, ok := StringValue(value)
+		if !ok {
+			return nil, fmt.Errorf("constant query value %s is not scalar", key)
+		}
+		merged[key] = text
 	}
-	return merged
+	return merged, nil
 }
 
 func mapUpstreamHTTPError(spec *ResponseSpec, body []byte, status int) *ExecutionError {
@@ -726,6 +798,37 @@ func isEmptyInputValue(value any) bool {
 		return len(typed) == 0
 	}
 	return false
+}
+
+func inputValueOrDefault(defaults map[string]any, input map[string]any, field string) (any, bool) {
+	value, ok := input[field]
+	if !ok && defaults != nil {
+		value, ok = defaults[field]
+	}
+	return value, ok
+}
+
+func requestNumberValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case uint:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func validateURLInputValue(value any, allowedHosts []string) error {
@@ -831,6 +934,9 @@ func validateResponseSuccess(spec *SuccessSpec, raw map[string]any) *ExecutionEr
 	if spec.NonEmpty != "" {
 		value, ok := Lookup(raw, spec.NonEmpty)
 		if !ok || !isNonEmptyResponseValue(value) {
+			if spec.EmptyOK {
+				return nil
+			}
 			code := strings.TrimSpace(spec.EmptyCode)
 			if code == "" {
 				code = "upstream_empty_body"

@@ -50,11 +50,13 @@ ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker c
    会退化成相对路径，而前端托管在 Cloudflare、后端在服务器上，两边不同域。
 3. **Capability 环境变量必须在 compose 显式透传** —— 例如
    `CAPABILITY_BRIGHTDATA_API_KEY`、`CAPABILITY_BRIGHTDATA_ZONE` 和
-   `CAPABILITY_AISA_API_KEY` 只写进 `.env` 不会自动进入容器。生产使用：
+   `CAPABILITY_AISA_API_KEY`、`CAPABILITY_DEEPSEEK_API_KEY` 只写进 `.env`
+   不会自动进入容器。生产使用：
 
    ```bash
    ./ops/deploy/set-capability-secret.sh
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
+   ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY --dry-run
    ./ops/deploy/set-capability-secret.sh --dry-run
    # 若 SSH 未在 ~/.ssh/config 绑定该主机：
@@ -62,7 +64,8 @@ ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker c
    ```
 
    变量名只允许 `^CAPABILITY_[A-Z0-9_]+$`。不带变量名时保持 Bright Data 行为。
-   API key 由交互输入提供；不要把它放进命令行参数、shell history 或提交到仓库。
+   API key 由交互输入或 stdin 重定向提供；不要把它放进命令行参数、shell history
+   或提交到仓库。该脚本只输出“已设置/未设置”，不输出密钥值。
 
 ## 改动本目录时
 

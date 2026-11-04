@@ -341,6 +341,15 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
   公共错误码和 HTTP 状态；用户响应不回传上游原始 message。
 - `/v1/capabilities` 的 `per_unit` 条目额外返回 `billing.max_usd`（等于 `reserve_usd`）。
 
+2026-11-04 新增的 Manifest 通用能力：
+
+- `request.ranges`：在预扣费前校验数值输入的最小值、最大值和整数约束。
+- `request.consts`：保留原生 JSON 标量类型，布尔常量不会再被编码成字符串。
+- `response.collections`：按声明字段投影上游对象数组，未声明字段不会进入公共输出。
+- `response.success.empty_ok`：配合 `success.non_empty`，把空数组、空对象、空字符串或缺失值
+  视为成功；结算为 0 并退回预扣费。未声明该字段的 Manifest 保持原有空正文失败语义。
+- 已接入 `web-search-v1`（DeepSeek Search，同步 `per_call`，空结果免费）。
+
 ---
 
 ## 5. Manifest 示例
@@ -493,7 +502,9 @@ limits:
 | 用户 key / 余额 | `tokens` / `users.quota` |
 | 日志 | `logs` + capability/provider/usage 字段 |
 
-> 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）和 `web-unlock-v1`
-> （Bright Data Web Unlocker，同步）已接入；前者是免费试点，`web-unlock-v1`
-> 按次收费。
+> 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
+> （Bright Data Web Unlocker，同步）、16 个 AISA 搜索/SEO 能力和
+> `web-search-v1`（DeepSeek Search，同步）已接入。`weather-v1` 与
+> `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
+> `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
 > 多供应商路由、后台 Manifest 编辑、SSE 流式仍在 Phase 2/3。

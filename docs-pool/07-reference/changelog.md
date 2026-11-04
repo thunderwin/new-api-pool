@@ -13,6 +13,22 @@
 
 ---
 
+## v0.6.7 — DeepSeek 网页搜索 Capability（2026-11-04）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增同步能力 `web-search-v1`（DeepSeek Search），输入 `query`、可选 `count`（默认 8，范围 1–20），价格 $0.001 / 次 |
+| `+` | `response.success.empty_ok`：声明后，空数组/空对象/空字符串/缺失值仍返回成功；结算 0 并退回预扣费，未声明的 Manifest 保持原失败语义 |
+| `+` | `response.collections`：按字段投影对象数组；`web-search-v1` 只返回 title/url/snippet/summary/site_name/date，不返回 content |
+| `+` | `request.ranges`：预扣费前校验数值最小值、最大值和整数约束 |
+| `*` | `request.consts` 保留原生 JSON 类型，DeepSeek 的 `need_content` 固定为布尔 `false`，用户输入不能覆盖 |
+| `+` | DeepSeek 错误映射：400/413 → 400 `invalid_request`，401/402 → 503 `upstream_unavailable`，429 → 429，408/504 → 504 `upstream_timeout`，5xx 不回传上游正文 |
+| `+` | compose 透传 `CAPABILITY_DEEPSEEK_API_KEY` |
+| `+` | 离线测试覆盖非空成功、空结果免费、旧空结果失败回归、字段投影、默认/范围、常量覆盖、缺 key、重试、错误映射、退款和脱敏 |
+| `*` | 官方文档核实：`need_content` 默认 false、`summary` 默认返回、Search 100 QPS、仅 HTTP 200 且 results 非空按 $0.75/1000 次计费 |
+
+---
+
 ## v0.6.6 — Capability 付费失败与每日对账（2026-10-29）
 
 | 类型 | 变更 |

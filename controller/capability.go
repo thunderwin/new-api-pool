@@ -553,12 +553,19 @@ func prepareCapabilityBilling(c *gin.Context, m *capability.Manifest, input map[
 }
 
 func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw map[string]any, headers http.Header) (int, string, float64, string, *capability.ExecutionError) {
-	if m.Billing.Type == capability.BillingPerCall {
-		return priceData.Quota, "call", 1, "call", nil
-	}
 	unit := m.Billing.Unit
 	if unit == "" {
-		unit = "unit"
+		if m.Billing.Type == capability.BillingPerCall {
+			unit = "call"
+		} else {
+			unit = "unit"
+		}
+	}
+	if m.Response != nil && m.Response.Success.EmptyResponse(raw) {
+		return 0, unit, 0, "empty_response", nil
+	}
+	if m.Billing.Type == capability.BillingPerCall {
+		return priceData.Quota, "call", 1, "call", nil
 	}
 	if strings.TrimSpace(m.Billing.QuantityHeader) != "" {
 		rawValue := ""

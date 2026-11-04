@@ -1,6 +1,6 @@
-# 第三方 Capability API（2026-10-29 更新）
+# 第三方 Capability API（2026-11-04 更新）
 
-> 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA 能力已实现**。
+> 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
 >
 > 2026-10-23 追加：异步 per-unit（估算预扣 + 终态差额结算）和
@@ -17,6 +17,10 @@
 > 2026-10-29 追加（已实现并离线核实）：付费 Capability 不随调用方断开而取消；
 > 一次调用使用单一整体截止时间；已写出请求在传输错误后不重试；2xx 后处理失败和
 > 结果未知的按用量调用按实际成本或预扣上限结算。每日 AISA 用量自动对账。
+>
+> 2026-11-04 追加（已实现并离线核实）：新增 DeepSeek Search `web-search-v1`；
+> 通用 Manifest 支持数值范围、原生类型常量、对象数组字段投影，以及“声明路径为空时
+> 成功且不计费”的 `response.success.empty_ok`。
 
 ## 路由
 
@@ -67,6 +71,7 @@ POST /v1/capabilities/weather-v1
 | `env` | POST body 字段到服务端环境变量名的映射；同名用户输入和常量会被环境变量值覆盖。变量缺失返回 `credential_error` |
 | `body_wrap` | 只允许空值或 `"array"`；`"array"` 把组装好的 POST object 包成单元素数组 |
 | `headers` | 常量请求头。拒绝 `Authorization`、`Host`、`Content-Length`、Cookie 和 hop-by-hop 头，也拒绝非法名称和换行注入 |
+| `ranges` | 输入数值约束：`min`、`max`、`integer`。在预扣费和上游调用前校验，不是数字或超出范围返回 `400 invalid_request` |
 
 `response` 还可声明：
 
@@ -74,13 +79,17 @@ POST /v1/capabilities/weather-v1
 |---|---|
 | `success.path` + `success.values` | 上游 JSON 中业务状态必须命中允许值，否则返回稳定错误码（默认 `upstream_target_status`） |
 | `success.non_empty` | 指定正文路径必须非空，否则返回 `upstream_empty_body` |
+| `success.empty_ok` | 与 `success.non_empty` 配套。路径为空数组、空对象、空字符串或缺失时仍视为成功；输出照常映射，结算为 0 并退回预扣费。未声明时保持原 `upstream_empty_body` 失败语义 |
 | `success.failure_code` / `success.empty_code` | 覆盖上述两个稳定错误码 |
 | `status_header` / `error_header` | 供应商以 HTTP 200 包装错误时，从响应头读取目标状态和错误标记；错误标记触发失败，重试按目标状态判断 |
 | `error_code_path` | 从 JSON 错误体提取上游 code；正文为字符串时忽略 |
 | `error_map` | 上游 code 或 HTTP 状态到 `{code, http_status, message, log_code}` 的稳定映射；用户只看到公共文案 |
+| `collections` | 对象数组投影：`{path, fields}`。输出只保留声明字段；数组为空时输出 `[]` |
 
 业务失败按调用是否可能已经到达上游计费，不再一律退款。错误响应和日志不回传上游正文；
 目标状态码可以作为数字记录。
+
+`request.consts` 保留 JSON 原生类型，因此布尔值会以 `true` / `false` 发送，不会变成字符串。
 
 AISA 的 402 余额不足属于**运营方账户余额**，统一映射为 `503 upstream_unavailable`；
 401 / `authentication_unavailable` 也是 `503`，日志分别记为上游鉴权错误。
@@ -137,6 +146,7 @@ GET /v1/tasks/task_...
 | `serp-google-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | Google 自然搜索 SERP |
 | `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
+| `web-search-v1` | DeepSeek Search | 同步 | $0.001 / 次 | 网页搜索；空结果成功且免费 |
 
 Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 
@@ -195,6 +205,43 @@ Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上�
 实际分别产生 12,120 / 24,036 微美元上游成本；`cost_usd`、消费日志和余额变化一致。
 AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做付费调用。
 
+### `web-search-v1`（DeepSeek Search，2026-11-04）
+
+官方文档核实日期：2026-11-04。
+
+- 入口：`POST https://api.deepseek.com/v1/tools/search`
+- 鉴权：Bearer key，服务端变量 `CAPABILITY_DEEPSEEK_API_KEY`，用户不能传入或覆盖
+- 输入：必填 `query`；可选 `count`，默认 8，范围 1–20 的整数；
+  可选 `ori_question`、`localization`
+- 上游常量：`need_content: false`。官方文档确认其默认值就是 `false`；
+  此时 `content` 是空字符串，而 `summary` 是必返字段，通常 600–800 字
+- 输出：`{ "results": [...] }`；每项只保留 `title`、`url`、`snippet`、`summary`、
+  `site_name`、`date`，不回传 `content`、`site_icon`、`authority`、`rerank_score`
+- 价格：`per_call`，$0.001 / 次
+- 空结果：HTTP 200 且 `results: []` 返回成功，`cost_usd = 0`，预扣费全额退回
+- 超时/大小：总超时 30 秒，最大响应 2 MiB
+- 重试：HTTP 408/429/500/502/503/504 最多再试 1 次；非 2xx 不计费
+- 错误映射：
+
+| 上游 | 公共响应 | 日志区分 |
+|---|---|---|
+| 400 / 413 | `400 invalid_request` | `upstream_invalid_request` / `upstream_request_too_large` |
+| 401 | `503 upstream_unavailable` | `upstream_authentication` |
+| 402 | `503 upstream_unavailable` | `upstream_balance_unavailable` |
+| 408 / 504 | `504 upstream_timeout` | `upstream_read_timeout` / `upstream_downstream_timeout` |
+| 429 | `429 upstream_rate_limited` | `upstream_rate_limited` |
+| 500 / 502 / 503 | `503 upstream_unavailable` | provider failure / unavailable |
+
+官方来源：
+
+- <https://api-docs.deepseek.com/guides/search.md>
+- <https://api-docs.deepseek.com/api/search.md>
+- <https://api-docs.deepseek.com/quick_start/pricing.md>
+
+DeepSeek 官方当前写的是每 1,000 次成功 Search 收 **$0.75**（约 ¥5），
+账户级 Search 限速 100 QPS；只有 HTTP 200 且 `results` 非空才收费。
+维护者 2026-11-04 实测服务器到 DeepSeek TTFB 约 0.3 秒，单次搜索 260–600ms。
+
 ## 计费
 
 - Manifest 的 `billing.price_usd` 是唯一价格来源，不读硬编码。
@@ -207,6 +254,9 @@ AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做�
 - 异步 `per_unit`：manifest 必须声明 `estimate_path`，提交时按预估量预扣；
   任务完成时按 `quantity_path` 读取实际用量，差额补扣/退还。
 - 价格为 0 的 capability 不创建 billing session，零余额用户也能调用。
+- 声明 `response.success.empty_ok` 的同步能力在指定路径为空时仍返回 200，
+  `usage.quantity = 0`、`cost_usd = 0`，预扣费通过结算差额退回；
+  消费日志记 `usage_source=empty_response` 和 0 quota。
 - `GET /v1/capabilities` 对 `per_unit` 额外返回 `billing.max_usd`，当前等于
   `billing.reserve_usd`。
 
@@ -269,6 +319,7 @@ AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficien
 | `uncertain_reserve` | 请求已写出但结果未知，按 `reserve_usd` 结算 |
 | `estimated` | 异步提交时按 `estimate_path` 预扣；完成后再按实际用量补差 |
 | `call` | `per_call` 按次计费 |
+| `empty_response` | 声明 `empty_ok` 的路径为空；本次按 0 结算 |
 
 ### 结算失败
 
@@ -367,6 +418,10 @@ Capability 任务写入现有 `tasks` 表，`platform = "capability"`。
   开启 “Premium domains” 约 3 分钟后，同一请求目标状态 200，返回 Wayfair 首页。
 - Premium domains 的单价 Bright Data 未公开，按控制台显示为准。
 - 经 `web-unlock-v1` 和 ericBot 网关的端到端调用尚待一次实际使用验证。
+
+## 线上实测（`web-search-v1`）
+
+> 待 2026-11-04 本次发布完成后填写；当前只完成本地 mock 上游离线验证。
 
 ## 仍未实现（下一步）
 

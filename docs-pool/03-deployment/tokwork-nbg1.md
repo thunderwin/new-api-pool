@@ -206,7 +206,7 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 > 否则 `go build` 会失败。线上设了 `FRONTEND_BASE_URL`，二进制里嵌的这套 SPA
 > 不会被服务（`https://api.tokwork.com/` 是 301，见 §3）。
 
-### Capability 环境变量（2026-10-29）
+### Capability 环境变量（2026-11-04）
 
 Capability 凭证值只写进服务器 `.env`：
 
@@ -215,11 +215,13 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
 | `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 与重建后的容器内均已设置） | **是** |
+| `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
 `credential_error`；缺 AISA key 时 16 个 AISA 能力同样返回 `credential_error`。
-两种情况都不会调用上游、不扣费。
+缺 DeepSeek key 时 `web-search-v1` 返回 `credential_error`。
+这些情况都不会调用上游、不扣费。
 
 API key 用交互脚本设置，不要在命令行参数、聊天或文档里传值：
 
@@ -227,6 +229,7 @@ API key 用交互脚本设置，不要在命令行参数、聊天或文档里传
 cd /path/to/new-api-pool
 ./ops/deploy/set-capability-secret.sh
 ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
+./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
 ```
 
 脚本默认目标 `root@2.31.8.21`、远端目录 `/opt/new-api-pool`，可用
@@ -236,6 +239,8 @@ cd /path/to/new-api-pool
 脚本会先备份 `.env`，原子替换目标变量的行，保持 `chmod 600`，再执行
 `docker compose up -d new-api`，最后只报告“已设置/未设置”。`--dry-run`
 可在本地临时目录验证默认变量或指定变量，不会连接服务器。
+脚本从 stdin 读取第一行密钥，因此也可以直接把本地密钥文件重定向给它；
+不要用 `cat`、命令参数或可回显的变量传递密钥。
 
 ## 6. 容器与资源预算
 
@@ -327,11 +332,11 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 **已核实 2026-10-23 的流程：**
 
 1. 在 `new-api-pool/` 构建前端和 linux/amd64 后端，上传 `new-api`。
-2. 上传/更新 `ops/deploy/docker-compose.yml`，确认 Bright Data 和 AISA 的 Capability 环境变量在
+2. 上传/更新 `ops/deploy/docker-compose.yml`，确认 Bright Data、AISA 和 DeepSeek 的 Capability 环境变量在
    `new-api.environment` 中显式透传。
 3. 服务器上先备份当前二进制、compose 和 `.env`，再构建/启动容器。
 4. 只读检查 `.env` 是否存在所需变量名，不打印值。
-5. 验证 `/api/status`、容器健康、`GET /v1/capabilities` 的 3 个能力和既有聊天回归。
+5. 验证 `/api/status`、容器健康、`GET /v1/capabilities` 的能力目录和既有聊天回归。
 
 回滚时恢复同一轮备份的二进制、compose 文件和 `.env`，再执行
 `docker compose up -d`。数据库不参与本次变更。

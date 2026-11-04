@@ -3,7 +3,7 @@
 > **读者**：调用 TokWork 网关的开发者 / 集成方。本文可以直接发给客户。
 > **内容**：怎么拿 Key、怎么鉴权、怎么用 OpenAI / Anthropic / Gemini 三种格式调用大模型、
 > 怎么调用第三方 API（Capability）、怎么计费、出错怎么办。
-> **最后核实**：2026-10-29。维护者请先看文末「维护者备注」。
+> **最后核实**：2026-11-04。维护者请先看文末「维护者备注」。
 
 ---
 
@@ -298,13 +298,14 @@ curl https://api.tokwork.com/v1/capabilities \
 - `mode`：`sync`（同步，一次请求拿结果）或 `async`（异步，提交后轮询）。**调用方式由它决定**。
 - `billing`：计费方式与单价（美元）。
 
-当前已上线（2026-10-29）：
+当前已上线（2026-11-04）：
 
 | ID | 模式 | 输入 | 输出 | 单价 |
 |---|---|---|---|---|
 | `weather-v1` | 同步 | **必填** `latitude`、`longitude`；可选 `current`、`timezone` | `time`、`temperature_2m`、`wind_speed_10m` | 免费 |
 | `ssl-analyze-v1` | 异步 | `host`（域名） | 各 endpoint 的 TLS 评级详情 | 免费 |
 | `web-unlock-v1` | 同步 | **必填** `url`；仅限 Wayfair 四个主域名及子域名的 HTTPS 页面 | `status`、`html` | $0.003 / 次 |
+| `web-search-v1` | 同步 | **必填** `query`；可选 `count`（默认 8，最大 20） | `results[]`：`title`、`url`、`snippet`、`summary`、`site_name`、`date` | $0.001 / 次；空结果免费 |
 
 搜索与 SEO 能力（AISA，按上游实际用量结算）：
 
@@ -396,6 +397,47 @@ curl https://api.tokwork.com/v1/capabilities/web-unlock-v1 \
 - `html` 最大 8 MiB，单次超时 90 秒。
 - 只有目标页 HTTP `200` 且正文非空才计费；Bright Data 错误、目标非 200、空正文都自动退款。
 
+**网页搜索示例**（`web-search-v1`）：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/web-search-v1 \
+  -H "Authorization: Bearer sk-xxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "query": "OpenAI API pricing",
+      "count": 3
+    }
+  }'
+```
+
+```json
+{
+  "success": true,
+  "capability": "web-search-v1",
+  "output": {
+    "results": [
+      {
+        "title": "API Pricing",
+        "url": "https://openai.com/api/pricing/",
+        "snippet": "Short search snippet",
+        "summary": "Longer model-readable summary",
+        "site_name": "OpenAI",
+        "date": "2026-11-04T00:00:00Z"
+      }
+    ]
+  },
+  "usage": { "unit": "call", "quantity": 1 },
+  "cost_usd": 0.001
+}
+```
+
+- `count` 省略时默认 8，只接受 1–20 的整数；`query` 必填且不能为全空白。
+- 服务端固定 `need_content: false`，用户传入同名参数无效；结果不回传网页全文。
+- 上游返回 HTTP 200 但没有匹配结果时仍是成功响应：`output.results = []`、
+  `usage.quantity = 0`、`cost_usd = 0`，不扣费。
+- 单次总超时 30 秒，最多返回 2 MiB。
+
 **外链汇总示例**（`backlinks-summary-v1`）：
 
 ```bash
@@ -462,7 +504,7 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 
 | HTTP | `error_code` | 含义 |
 |---|---|---|
-| 400 | `invalid_request` | 请求体不是合法 JSON |
+| 400 | `invalid_request` | 请求体不是合法 JSON，或必填/范围校验失败；网页搜索参数被上游拒绝时也是这个码 |
 | 402 | `quota_insufficient` | 余额不足 |
 | 404 | `capability_not_found` | 能力 ID 不存在，或同步/异步用错了入口 |
 | 404 | `task_not_found` | 任务不存在或不属于你 |
@@ -475,7 +517,7 @@ Capability 接口的业务错误使用独立的格式（与大模型接口不同
 | 504 | `upstream_timeout` | 整体截止时间到；若请求已写出，按用量能力可能已计费，错误体带 `cost_usd`，**不要立即重试** |
 | 502 | `upstream_target_status` | 目标网页不是 HTTP 200；已退款，不返回网页正文 |
 | 502 | `upstream_empty_body` | 目标网页正文为空；已退款 |
-| 503 | `upstream_unavailable` | 第三方或运营方上游暂时不可用；已退款。AISA 余额不足也是这个公共错误 |
+| 503 | `upstream_unavailable` | 第三方或运营方上游暂时不可用；已退款。AISA / DeepSeek 运营方账户余额不足、鉴权失效也是这个公共错误 |
 | 429 | `upstream_rate_limited` | 上游限流；按提示稍后重试 |
 
 > Key 无效时仍返回 §2 那种 `401` 格式。
@@ -541,6 +583,9 @@ cost_usd = price_usd × quantity × GroupRatio
 `price_usd=0.000001`，即 1 倍成本价。`billing.max_usd` 是单次准入上限；
 它只阻止预估过高的请求，不保证最终扣费绝不超过该数字。成功但响应缺少成本头时，
 平台按 `max_usd` 结算，并在内部消费日志标记 `reserve_fallback`；不会不扣费。
+
+`web-search-v1` 是 $0.001 / 次；HTTP 200 且没有搜索结果时按 0 次计费，
+响应仍是成功。上游错误、超时和限流都会退款。
 
 ### 6.4 价格快照（2026-10-23，仅供参考）
 
@@ -683,6 +728,7 @@ OpenAI 格式接口（含 `/v1/chat/completions`、`/v1/responses`、`/v1/images
 | 503 `model_not_found` | `middleware/distributor.go` |
 | 501 `api_not_implemented` | `controller/relay.go` `RelayNotImplemented` |
 | Capability 契约 / 错误码 / 幂等 | `controller/capability.go`、`capability/executor.go`、[capability-api.md](../07-reference/capability-api.md) |
+| DeepSeek Search 默认值、计费、限速 | <https://api-docs.deepseek.com/guides/search.md>、<https://api-docs.deepseek.com/api/search.md>、<https://api-docs.deepseek.com/quick_start/pricing.md>（2026-11-04 核实） |
 | 价格快照与换算 | 2026-10-23 `GET /api/pricing`（42 个模型，分组倍率 default = 1）；换算口径见 §6.2 |
 | 门户地址 | [tokwork-nbg1.md](../03-deployment/tokwork-nbg1.md) §8.6.9 |
 

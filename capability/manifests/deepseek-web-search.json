@@ -1,0 +1,123 @@
+{
+  "id": "web-search-v1",
+  "provider": "deepseek",
+  "mode": "sync",
+  "description": "Search the web through DeepSeek and return ranked titles, URLs, snippets, summaries, site names, and dates. Empty result sets are successful and free.",
+  "endpoint": "https://api.deepseek.com/v1/tools/search",
+  "method": "POST",
+  "auth": {
+    "type": "bearer",
+    "secret_ref": "CAPABILITY_DEEPSEEK_API_KEY"
+  },
+  "request": {
+    "content_type": "application/json",
+    "required": ["query"],
+    "body": {
+      "query": "$.input.query",
+      "count": "$.input.count",
+      "ori_question": "$.input.ori_question",
+      "localization": "$.input.localization"
+    },
+    "defaults": {
+      "count": 8
+    },
+    "ranges": {
+      "count": {
+        "min": 1,
+        "max": 20,
+        "integer": true
+      }
+    },
+    "consts": {
+      "need_content": false
+    }
+  },
+  "response": {
+    "success": {
+      "non_empty": "$.results",
+      "empty_ok": true
+    },
+    "collections": {
+      "results": {
+        "path": "$.results",
+        "fields": ["title", "url", "snippet", "summary", "site_name", "date"]
+      }
+    },
+    "error_code_path": "$.error.code",
+    "error_map": {
+      "400": {
+        "code": "invalid_request",
+        "http_status": 400,
+        "message": "The search request parameters are invalid.",
+        "log_code": "upstream_invalid_request"
+      },
+      "413": {
+        "code": "invalid_request",
+        "http_status": 400,
+        "message": "The search request parameters are invalid.",
+        "log_code": "upstream_request_too_large"
+      },
+      "401": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The web search service is temporarily unavailable.",
+        "log_code": "upstream_authentication"
+      },
+      "402": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The web search service is temporarily unavailable.",
+        "log_code": "upstream_balance_unavailable"
+      },
+      "408": {
+        "code": "upstream_timeout",
+        "http_status": 504,
+        "message": "The web search request timed out.",
+        "log_code": "upstream_read_timeout"
+      },
+      "429": {
+        "code": "upstream_rate_limited",
+        "http_status": 429,
+        "message": "The web search service is rate limited; retry later.",
+        "log_code": "upstream_rate_limited"
+      },
+      "500": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The web search service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      },
+      "502": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The web search service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      },
+      "503": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The web search service is temporarily unavailable.",
+        "log_code": "upstream_unavailable"
+      },
+      "504": {
+        "code": "upstream_timeout",
+        "http_status": 504,
+        "message": "The web search request timed out.",
+        "log_code": "upstream_downstream_timeout"
+      }
+    }
+  },
+  "billing": {
+    "type": "per_call",
+    "unit": "call",
+    "price_usd": 0.001
+  },
+  "limits": {
+    "timeout": "30s",
+    "max_response_bytes": 2097152
+  },
+  "retry": {
+    "attempts": 2,
+    "retry_on": [408, 429, 500, 502, 503, 504]
+  }
+}
