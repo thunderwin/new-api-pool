@@ -1,4 +1,4 @@
-# 第三方 Capability API（2026-11-04 更新）
+# 第三方 Capability API（2026-11-05 更新）
 
 > 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
@@ -21,6 +21,9 @@
 > 2026-11-04 追加（已实现并离线核实）：新增 DeepSeek Search `web-search-v1`；
 > 通用 Manifest 支持数值范围、原生类型常量、对象数组字段投影，以及“声明路径为空时
 > 成功且不计费”的 `response.success.empty_ok`。
+>
+> 2026-11-05 追加（已实现并离线核实）：新增 AISA DataForSEO `keyword-ideas-v1`
+> 和 `keyword-volume-v1`；通用 Manifest 支持输入数组长度预检和对象数组的相对字段路径投影。
 
 ## 路由
 
@@ -72,6 +75,7 @@ POST /v1/capabilities/weather-v1
 | `body_wrap` | 只允许空值或 `"array"`；`"array"` 把组装好的 POST object 包成单元素数组 |
 | `headers` | 常量请求头。拒绝 `Authorization`、`Host`、`Content-Length`、Cookie 和 hop-by-hop 头，也拒绝非法名称和换行注入 |
 | `ranges` | 输入数值约束：`min`、`max`、`integer`。在预扣费和上游调用前校验，不是数字或超出范围返回 `400 invalid_request` |
+| `array_lengths` | 输入数组长度约束：`min`、`max`。在预扣费和上游调用前校验；不是数组或超出范围返回 `400 invalid_request` |
 
 `response` 还可声明：
 
@@ -84,7 +88,7 @@ POST /v1/capabilities/weather-v1
 | `status_header` / `error_header` | 供应商以 HTTP 200 包装错误时，从响应头读取目标状态和错误标记；错误标记触发失败，重试按目标状态判断 |
 | `error_code_path` | 从 JSON 错误体提取上游 code；正文为字符串时忽略 |
 | `error_map` | 上游 code 或 HTTP 状态到 `{code, http_status, message, log_code}` 的稳定映射；用户只看到公共文案 |
-| `collections` | 对象数组投影：`{path, fields}`。输出只保留声明字段；数组为空时输出 `[]` |
+| `collections` | 对象数组投影：`{path, fields}` 或 `{path, field_paths}`。`fields` 保留平铺字段；`field_paths` 把相对 JSON 路径映射成新字段名，缺失值输出 `null`。输出只保留声明字段；数组为空时输出 `[]` |
 
 业务失败按调用是否可能已经到达上游计费，不再一律退款。错误响应和日志不回传上游正文；
 目标状态码可以作为数字记录。
@@ -143,6 +147,8 @@ GET /v1/tasks/task_...
 | `organic-competitors-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 自然搜索竞品 |
 | `ranked-keywords-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 域名排名关键词 |
 | `keyword-gap-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 两域名关键词交集/差距 |
+| `keyword-ideas-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 种子词扩展相关关键词 |
+| `keyword-volume-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 关键词搜索量与 12 个月趋势 |
 | `serp-google-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | Google 自然搜索 SERP |
 | `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
@@ -163,7 +169,7 @@ Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 - 输出：`{ "status": 200, "html": "<目标页面正文>" }`。
 - 超时 `90s`，最大响应 `8 MiB`；上游 `429/502/503/504` 最多再试一次。
 
-### AISA 搜索与 SEO 能力（2026-10-29）
+### AISA 搜索与 SEO 能力（2026-11-05）
 
 基址为 `https://api.aisa.one/apis/v1`，Bearer key 来自
 `CAPABILITY_AISA_API_KEY`。Manifest 只暴露白名单参数；DataForSEO 请求按 AISA 契约
@@ -185,6 +191,8 @@ Similarweb 默认 `country=ww`、`granularity=monthly`。
 | `organic-competitors-v1` | 自然搜索竞品；`target`、地区、语言、`limit` | $0.10 |
 | `ranked-keywords-v1` | 排名关键词；`target`、地区、语言、`limit` | $0.30 |
 | `keyword-gap-v1` | 关键词差距；`target1`、`target2`、地区、语言 | $0.10 |
+| `keyword-ideas-v1` | 1–20 个种子词扩展相关关键词；`keywords`、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.27 |
+| `keyword-volume-v1` | 1–200 个关键词的搜索量、CPC、竞争度、意图和 12 个月趋势；`keywords`、`location_name`、`language_code` | $0.16 |
 | `serp-google-v1` | Google SERP；`keyword`、地区、语言、设备、`depth` | $0.05 |
 | `ai-brand-mentions-v1` | AI 品牌露出；`target` 必须是 `[{"domain":"..."}]` 或 `[{"keyword":"..."}]` | $0.20 |
 | `page-seo-audit-v1` | 单页审计；`url`，JS/浏览器渲染默认关闭 | $0.03 |
@@ -193,6 +201,30 @@ Similarweb 默认 `country=ww`、`granularity=monthly`。
 平台仍按成功响应头 `X-AISA-Customer-Cost-Micros-USD` 的实际值结算。
 Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上游重复 key
 返回 409，不重放原结果。AISA 只对 429/503 最多重试一次，不对 200 或 502 重试。
+
+2026-11-05 新增的两个关键词能力使用 `location_name` 而不是 `location_code`，
+默认 `United States` / `en`，可覆盖为 `Germany` / `de` 等。单批关键词数在预扣费前校验：
+`keyword-ideas-v1` 最多 20 个种子词，`keyword-volume-v1` 最多 200 个关键词；超出返回
+`400 invalid_request`。
+
+两个能力只返回 `keywords[]`，每项固定为 `keyword`、`search_volume`、`cpc`、
+`competition`、`intent`、`monthly_searches` 六个声明字段。上游没有意图或趋势数据时
+对应字段为 `null`，不会把 DataForSEO 的 `keyword_info`、`serp_info` 等大块原始结构返回给调用方。
+
+2026-11-05 免费 quote 结果：
+
+- `keyword-ideas-v1` 默认 1 个种子词、50 条结果：HTTP 200，预估 `$0.132000`；
+- `keyword-volume-v1` 1 个关键词：HTTP 200，预估 `$0.078480`；
+- `keyword-volume-v1` 200 个关键词：HTTP 200，预估仍为 `$0.078480`；
+- 备选 Google Ads Search Volume 200 个关键词：HTTP 200，预估 `$0.090000`，但缺少搜索意图，
+  因此没有选用。
+
+这些 quote 只用于确定上限，不代表真实调用成功或最终账单。
+
+`serp-google-v1` 当前输出完整 DataForSEO `result`，因此如果目标 SERP 含
+`people_also_ask`，基础问题项会保留在 `output.result[0].items[]` 中。当前没有暴露
+`people_also_ask_click_depth`，不能请求展开的追问层级；要稳定支持展开，需要新增白名单参数、
+重新 quote 上限并补 fixture 测试。
 
 2026-10-29 对 16 个能力的默认请求逐个执行免费 quote：全部 HTTP 200 且返回
 `object=cost_estimate`。默认预估合计 `$3.625236`；单次预估范围为

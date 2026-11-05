@@ -298,7 +298,7 @@ curl https://api.tokwork.com/v1/capabilities \
 - `mode`：`sync`（同步，一次请求拿结果）或 `async`（异步，提交后轮询）。**调用方式由它决定**。
 - `billing`：计费方式与单价（美元）。
 
-当前已上线（2026-11-04）：
+当前已上线（2026-11-05）：
 
 | ID | 模式 | 输入 | 输出 | 单价 |
 |---|---|---|---|---|
@@ -324,11 +324,15 @@ curl https://api.tokwork.com/v1/capabilities \
 | `organic-competitors-v1` | 自然搜索竞品 | `target`、地区、语言、`limit` | $0.10 |
 | `ranked-keywords-v1` | 排名关键词 | `target`、地区、语言、`limit` | $0.30 |
 | `keyword-gap-v1` | 关键词差距 | `target1`、`target2` | $0.10 |
+| `keyword-ideas-v1` | 种子词扩展相关关键词 | `keywords`（1–20 个）、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.27 |
+| `keyword-volume-v1` | 关键词搜索量与 12 个月趋势 | `keywords`（1–200 个）、`location_name`、`language_code` | $0.16 |
 | `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth` | $0.05 |
 | `ai-brand-mentions-v1` | AI 品牌露出 | `target` 数组对象 | $0.20 |
 | `page-seo-audit-v1` | 单页 SEO 审计 | `url` | $0.03 |
 
-地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
+原有 AISA 能力的地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
+`keyword-ideas-v1` 和 `keyword-volume-v1` 使用 `location_name`，默认
+`United States` / 英语，例如可覆盖为 `"location_name": "Germany"`、`"language_code": "de"`。
 `ai-brand-mentions-v1` 的 target 必须写成数组对象，例如：
 
 ```json
@@ -437,6 +441,68 @@ curl https://api.tokwork.com/v1/capabilities/web-search-v1 \
 - 上游返回 HTTP 200 但没有匹配结果时仍是成功响应：`output.results = []`、
   `usage.quantity = 0`、`cost_usd = 0`，不扣费。
 - 单次总超时 30 秒，最多返回 2 MiB。
+
+**关键词扩展示例**（`keyword-ideas-v1`）：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/keyword-ideas-v1 \
+  -H "Authorization: Bearer sk-REPLACE_ME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "keywords": ["running shoes", "trail shoes"],
+      "location_name": "Germany",
+      "language_code": "de",
+      "limit": 25
+    }
+  }'
+```
+
+```json
+{
+  "success": true,
+  "capability": "keyword-ideas-v1",
+  "output": {
+    "keywords": [
+      {
+        "keyword": "laufschuhe",
+        "search_volume": 9900,
+        "cpc": 0.89,
+        "competition": "MEDIUM",
+        "intent": "transactional",
+        "monthly_searches": [
+          { "year": 2026, "month": 10, "search_volume": 9900 }
+        ]
+      }
+    ]
+  },
+  "usage": { "unit": "micro_usd", "quantity": 132000 },
+  "cost_usd": 0.132
+}
+```
+
+**关键词搜索量示例**（`keyword-volume-v1`）：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/keyword-volume-v1 \
+  -H "Authorization: Bearer sk-REPLACE_ME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "keywords": ["running shoes", "trail shoes", "walking shoes"],
+      "location_name": "United States",
+      "language_code": "en"
+    }
+  }'
+```
+
+- `keywords` 必须是 1–20（ideas）或 1–200（volume）个字符串；空数组、超限或非数组会在
+  预扣费前返回 `400 invalid_request`。
+- 每个 `output.keywords[]` 只包含 `keyword`、`search_volume`、`cpc`、`competition`、
+  `intent`、`monthly_searches`。上游没有意图或历史数据时，对应字段为 `null`。
+- `monthly_searches` 是最近 12 个月的搜索量数组。`competition` 是上游的竞争等级
+  （如 `LOW`、`MEDIUM`、`HIGH`）。
+- 单次上限分别是 $0.27 和 $0.16；实际费用仍按 `cost_usd` 和响应头成本结算。
 
 **外链汇总示例**（`backlinks-summary-v1`）：
 

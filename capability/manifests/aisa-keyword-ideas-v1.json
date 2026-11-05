@@ -1,0 +1,157 @@
+{
+  "id": "keyword-ideas-v1",
+  "provider": "aisa",
+  "mode": "sync",
+  "description": "Expands 1-20 seed keywords into related keyword ideas with monthly search volume, CPC, competition, optional intent, and 12-month history; customize location_name and language_code; billed by actual upstream usage, up to $0.27 per call.",
+  "endpoint": "https://api.aisa.one/apis/v1/dataforseo/dataforseo_labs/google/keyword_ideas/live",
+  "method": "POST",
+  "auth": {
+    "type": "bearer",
+    "secret_ref": "CAPABILITY_AISA_API_KEY"
+  },
+  "request": {
+    "required": [
+      "keywords"
+    ],
+    "body_wrap": "array",
+    "body": {
+      "keywords": "$.input.keywords",
+      "location_name": "$.input.location_name",
+      "language_code": "$.input.language_code",
+      "limit": "$.input.limit",
+      "offset": "$.input.offset"
+    },
+    "defaults": {
+      "location_name": "United States",
+      "language_code": "en",
+      "limit": 50,
+      "offset": 0
+    },
+    "array_lengths": {
+      "keywords": {
+        "min": 1,
+        "max": 20
+      }
+    },
+    "ranges": {
+      "limit": {
+        "min": 1,
+        "max": 200,
+        "integer": true
+      },
+      "offset": {
+        "min": 0,
+        "integer": true
+      }
+    },
+    "consts": {
+      "include_serp_info": false,
+      "include_clickstream_data": false
+    },
+    "headers": {
+      "X-AISA-Max-Price-USD": "0.27"
+    }
+  },
+  "response": {
+    "success": {
+      "path": "$.tasks.0.status_code",
+      "values": [
+        20000
+      ],
+      "failure_code": "upstream_task_failed"
+    },
+    "collections": {
+      "keywords": {
+        "path": "$.tasks.0.result.0.items",
+        "field_paths": {
+          "keyword": "$.keyword",
+          "search_volume": "$.keyword_info.search_volume",
+          "cpc": "$.keyword_info.cpc",
+          "competition": "$.keyword_info.competition_level",
+          "intent": "$.search_intent_info.main_intent",
+          "monthly_searches": "$.keyword_info.monthly_searches"
+        }
+      }
+    },
+    "error_code_path": "$.error.code",
+    "error_map": {
+      "400": {
+        "code": "invalid_request",
+        "http_status": 400,
+        "message": "The upstream data service rejected the request parameters."
+      },
+      "401": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_authentication"
+      },
+      "authentication_unavailable": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_authentication_unavailable"
+      },
+      "insufficient_wallet_balance": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_wallet_balance"
+      },
+      "insufficient_api_key_balance": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_api_key_balance"
+      },
+      "estimated_price_exceeds_max_price": {
+        "code": "cost_cap_exceeded",
+        "http_status": 422,
+        "message": "The estimated upstream cost exceeds the per-request cap; reduce the result limit or keyword count and try again.",
+        "log_code": "upstream_cost_cap_exceeded"
+      },
+      "402": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_balance_unavailable"
+      },
+      "429": {
+        "code": "upstream_rate_limited",
+        "http_status": 429,
+        "message": "The upstream data service is rate limited; retry later.",
+        "log_code": "upstream_rate_limited"
+      },
+      "502": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      },
+      "503": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The upstream data service is temporarily unavailable.",
+        "log_code": "upstream_unavailable"
+      }
+    }
+  },
+  "billing": {
+    "type": "per_unit",
+    "unit": "micro_usd",
+    "price_usd": 0.000001,
+    "quantity_header": "X-AISA-Customer-Cost-Micros-USD",
+    "reserve_usd": 0.27
+  },
+  "limits": {
+    "timeout": "90s",
+    "max_response_bytes": 8388608
+  },
+  "retry": {
+    "attempts": 2,
+    "retry_on": [
+      429,
+      503
+    ]
+  }
+}

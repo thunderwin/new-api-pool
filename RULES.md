@@ -44,6 +44,9 @@
   它不是任意 JSON 的通用 REST 透传。
 - `relay/channel/task/` 已有 Sora / Kling / Suno / Vidu 等异步适配器，可作为异步 API 的参考实现。
 - 计费目前有按 token、按次（`ModelPrice`）、多规格（`ImageSizePrice`）和计费表达式。
+- 2026-11-05 已核实：Capability 层共有 22 个能力，其中 AISA 18 个；新增
+  `keyword-ideas-v1` 与 `keyword-volume-v1`。两个能力在预扣费前校验数组长度，
+  只投影声明的关键词字段，按 AISA 响应头微美元成本结算，单次上限分别为 $0.27 / $0.16。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -350,6 +353,13 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
   视为成功；结算为 0 并退回预扣费。未声明该字段的 Manifest 保持原有空正文失败语义。
 - 已接入 `web-search-v1`（DeepSeek Search，同步 `per_call`，空结果免费）。
 
+2026-11-05 新增的 Manifest 通用能力：
+
+- `request.array_lengths`：在预扣费前校验输入必须是数组，并限制最小/最大元素数量。
+- `response.collections[].field_paths`：把对象数组元素的相对路径投影成扁平公共字段；
+  缺失的可选路径输出 `null`，未声明字段不会进入公共输出。
+- 已接入 `keyword-ideas-v1` 和 `keyword-volume-v1`（AISA / DataForSEO，同步 `per_unit`）。
+
 ---
 
 ## 5. Manifest 示例
@@ -503,7 +513,7 @@ limits:
 | 日志 | `logs` + capability/provider/usage 字段 |
 
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
-> （Bright Data Web Unlocker，同步）、16 个 AISA 搜索/SEO 能力和
+> （Bright Data Web Unlocker，同步）、18 个 AISA 搜索/SEO 能力和
 > `web-search-v1`（DeepSeek Search，同步）已接入。`weather-v1` 与
 > `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。

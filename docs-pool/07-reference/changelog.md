@@ -13,6 +13,28 @@
 
 ---
 
+## v0.6.8 — AISA 关键词挖掘与搜索量 Capability（2026-11-05）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增同步能力 `keyword-ideas-v1`：1–20 个种子词 → 相关关键词、月搜索量、CPC、竞争度、可选意图和 12 个月趋势；默认 50 条，单次上限 $0.27 |
+| `+` | 新增同步能力 `keyword-volume-v1`：1–200 个关键词 → 搜索量、CPC、竞争度、可选意图和 12 个月趋势；单次上限 $0.16 |
+| `+` | `request.array_lengths`：预扣费前校验输入数组的最小/最大长度，超限、非数组返回 `400 invalid_request` |
+| `+` | `response.collections[].field_paths`：把对象数组元素的相对 JSON 路径映射为扁平字段；可选值缺失时输出 `null`，不回传上游大块原始结构 |
+| `*` | 两个新能力均使用 DataForSEO 单元素数组请求、`X-AISA-Max-Price-USD`、响应头微美元用量、`tasks[0].status_code=20000` 成功检查、稳定错误映射和 429/503 最多重试一次 |
+| `*` | 地区默认美国英语，调用方可用 `location_name` / `language_code` 覆盖，例如 `Germany` / `de` |
+| `+` | 离线测试覆盖 Manifest 唯一 ID 与校验、默认/覆盖请求、数组上限、字段投影、响应头结算、reserve 兜底、内部任务失败、错误映射和上游 message 脱敏 |
+
+### 免费 quote 验证
+
+- `keyword-ideas-v1` 默认 1 个种子词、50 条：HTTP 200，`$0.132000`
+- `keyword-volume-v1` 1 个关键词：HTTP 200，`$0.078480`
+- `keyword-volume-v1` 200 个关键词：HTTP 200，`$0.078480`
+- 备选 Google Ads Search Volume 200 个关键词：HTTP 200，`$0.090000`；缺少搜索意图，未选用
+- 最终上限按默认预估低于上限一半设置：ideas $0.27、volume $0.16；均未超过 $0.50
+
+---
+
 ## v0.6.7 — DeepSeek 网页搜索 Capability（2026-11-04）
 
 | 类型 | 变更 |

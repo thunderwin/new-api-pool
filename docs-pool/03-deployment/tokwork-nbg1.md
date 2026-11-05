@@ -219,7 +219,7 @@ Capability 凭证值只写进服务器 `.env`：
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
-`credential_error`；缺 AISA key 时 16 个 AISA 能力同样返回 `credential_error`。
+`credential_error`；缺 AISA key 时 18 个 AISA 能力同样返回 `credential_error`。
 缺 DeepSeek key 时 `web-search-v1` 返回 `credential_error`。
 这些情况都不会调用上游、不扣费。
 

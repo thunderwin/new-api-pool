@@ -45,17 +45,18 @@ type AuthSpec struct {
 }
 
 type RequestSpec struct {
-	ContentType string                  `json:"content_type,omitempty"`
-	Query       map[string]string       `json:"query,omitempty"`
-	Body        map[string]string       `json:"body,omitempty"`
-	BodyWrap    string                  `json:"body_wrap,omitempty"`
-	Headers     map[string]string       `json:"headers,omitempty"`
-	Defaults    map[string]any          `json:"defaults,omitempty"`
-	Consts      map[string]any          `json:"consts,omitempty"`
-	Env         map[string]string       `json:"env,omitempty"`
-	Required    []string                `json:"required,omitempty"`
-	Ranges      map[string]RangeSpec    `json:"ranges,omitempty"`
-	URLInputs   map[string]URLInputSpec `json:"url_inputs,omitempty"`
+	ContentType  string                  `json:"content_type,omitempty"`
+	Query        map[string]string       `json:"query,omitempty"`
+	Body         map[string]string       `json:"body,omitempty"`
+	BodyWrap     string                  `json:"body_wrap,omitempty"`
+	Headers      map[string]string       `json:"headers,omitempty"`
+	Defaults     map[string]any          `json:"defaults,omitempty"`
+	Consts       map[string]any          `json:"consts,omitempty"`
+	Env          map[string]string       `json:"env,omitempty"`
+	Required     []string                `json:"required,omitempty"`
+	Ranges       map[string]RangeSpec    `json:"ranges,omitempty"`
+	ArrayLengths map[string]RangeSpec    `json:"array_lengths,omitempty"`
+	URLInputs    map[string]URLInputSpec `json:"url_inputs,omitempty"`
 }
 
 type RangeSpec struct {
@@ -113,8 +114,9 @@ type ResponseSpec struct {
 }
 
 type CollectionSpec struct {
-	Path   string   `json:"path"`
-	Fields []string `json:"fields"`
+	Path       string            `json:"path"`
+	Fields     []string          `json:"fields,omitempty"`
+	FieldPaths map[string]string `json:"field_paths,omitempty"`
 }
 
 type ErrorMapSpec struct {
@@ -273,6 +275,29 @@ func (m *Manifest) Validate() error {
 					return fmt.Errorf("manifest %s: request.ranges.%s.min exceeds max", m.ID, field)
 				}
 			}
+			for field, spec := range m.Request.ArrayLengths {
+				if strings.TrimSpace(field) == "" {
+					return fmt.Errorf("manifest %s: request.array_lengths contains an empty field", m.ID)
+				}
+				if spec.Min == nil && spec.Max == nil {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s requires min or max", m.ID, field)
+				}
+				if spec.Min != nil && (math.IsNaN(*spec.Min) || math.IsInf(*spec.Min, 0) || *spec.Min < 0) {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s.min is invalid", m.ID, field)
+				}
+				if spec.Max != nil && (math.IsNaN(*spec.Max) || math.IsInf(*spec.Max, 0) || *spec.Max < 0) {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s.max is invalid", m.ID, field)
+				}
+				if spec.Min != nil && spec.Max != nil && *spec.Min > *spec.Max {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s.min exceeds max", m.ID, field)
+				}
+				if spec.Integer && spec.Min != nil && math.Trunc(*spec.Min) != *spec.Min {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s.min must be an integer boundary", m.ID, field)
+				}
+				if spec.Integer && spec.Max != nil && math.Trunc(*spec.Max) != *spec.Max {
+					return fmt.Errorf("manifest %s: request.array_lengths.%s.max must be an integer boundary", m.ID, field)
+				}
+			}
 		}
 		if m.Response.Success != nil {
 			success := m.Response.Success
@@ -287,8 +312,12 @@ func (m *Manifest) Validate() error {
 			}
 		}
 		for key, spec := range m.Response.Collections {
-			if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" || len(spec.Fields) == 0 {
-				return fmt.Errorf("manifest %s: response.collections.%s requires path and fields", m.ID, key)
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" ||
+				(len(spec.Fields) == 0 && len(spec.FieldPaths) == 0) {
+				return fmt.Errorf("manifest %s: response.collections.%s requires path and fields or field_paths", m.ID, key)
+			}
+			if len(spec.Fields) > 0 && len(spec.FieldPaths) > 0 {
+				return fmt.Errorf("manifest %s: response.collections.%s fields and field_paths are mutually exclusive", m.ID, key)
 			}
 			if _, exists := m.Response.Output[key]; exists {
 				return fmt.Errorf("manifest %s: response output key %s is declared twice", m.ID, key)
@@ -302,6 +331,11 @@ func (m *Manifest) Validate() error {
 					return fmt.Errorf("manifest %s: response.collections.%s contains duplicate field %s", m.ID, key, field)
 				}
 				seen[field] = struct{}{}
+			}
+			for field, path := range spec.FieldPaths {
+				if strings.TrimSpace(field) == "" || strings.TrimSpace(path) == "" {
+					return fmt.Errorf("manifest %s: response.collections.%s contains an empty field_paths entry", m.ID, key)
+				}
 			}
 		}
 		for key, mapping := range m.Response.ErrorMap {

@@ -12,6 +12,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,28 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 				}
 			}
 		}
+		for field, spec := range m.Request.ArrayLengths {
+			value, ok := inputValueOrDefault(m.Request.Defaults, input, field)
+			if !ok {
+				continue
+			}
+			rv := reflect.ValueOf(value)
+			if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+				return &ExecutionError{
+					Code:       "invalid_request",
+					Message:    "an input value must be an array",
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+			length := float64(rv.Len())
+			if (spec.Min != nil && length < *spec.Min) || (spec.Max != nil && length > *spec.Max) {
+				return &ExecutionError{
+					Code:       "invalid_request",
+					Message:    "an input array length is outside the allowed range",
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
 		for field, spec := range m.Request.URLInputs {
 			value, ok := input[field]
 			if !ok || validateURLInputValue(value, spec.AllowedHosts) != nil {
@@ -211,17 +234,28 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 					HTTPStatus: http.StatusBadGateway,
 				}, m, statusCode, headers, raw, true, upstreamID)
 			}
-			projectedItem := make(map[string]any, len(spec.Fields))
-			for _, field := range spec.Fields {
-				fieldValue, ok := object[field]
-				if !ok {
-					return nil, attachResponseMetadata(&ExecutionError{
-						Code:       "missing_output_field",
-						Message:    "upstream response did not contain a required field",
-						HTTPStatus: http.StatusBadGateway,
-					}, m, statusCode, headers, raw, true, upstreamID)
+			projectedItem := make(map[string]any, len(spec.Fields)+len(spec.FieldPaths))
+			if len(spec.FieldPaths) > 0 {
+				for field, path := range spec.FieldPaths {
+					fieldValue, ok := Lookup(object, path)
+					if ok {
+						projectedItem[field] = fieldValue
+					} else {
+						projectedItem[field] = nil
+					}
 				}
-				projectedItem[field] = fieldValue
+			} else {
+				for _, field := range spec.Fields {
+					fieldValue, ok := object[field]
+					if !ok {
+						return nil, attachResponseMetadata(&ExecutionError{
+							Code:       "missing_output_field",
+							Message:    "upstream response did not contain a required field",
+							HTTPStatus: http.StatusBadGateway,
+						}, m, statusCode, headers, raw, true, upstreamID)
+					}
+					projectedItem[field] = fieldValue
+				}
 			}
 			projected = append(projected, projectedItem)
 		}

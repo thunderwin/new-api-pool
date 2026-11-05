@@ -452,6 +452,8 @@ func TestEmbeddedAISAManifests(t *testing.T) {
 		"serp-google-v1",
 		"ai-brand-mentions-v1",
 		"page-seo-audit-v1",
+		"keyword-ideas-v1",
+		"keyword-volume-v1",
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -640,8 +642,8 @@ func TestManifestFileIDsAreUnique(t *testing.T) {
 		}
 		ids[manifest.ID] = path
 	}
-	if len(ids) != 20 {
-		t.Fatalf("expected 20 embedded manifests, got %d", len(ids))
+	if len(ids) != 22 {
+		t.Fatalf("expected 22 embedded manifests, got %d", len(ids))
 	}
 }
 
@@ -688,12 +690,30 @@ func TestManifestRejectsUnsafeRequestExtensions(t *testing.T) {
 			maximum := 1.0
 			m.Request.Ranges = map[string]RangeSpec{"count": {Min: &minimum, Max: &maximum}}
 		}},
+		{name: "array length without bounds", mutate: func(m *Manifest) {
+			m.Request.ArrayLengths = map[string]RangeSpec{"items": {}}
+		}},
+		{name: "array length with inverted bounds", mutate: func(m *Manifest) {
+			minimum := 10.0
+			maximum := 1.0
+			m.Request.ArrayLengths = map[string]RangeSpec{"items": {Min: &minimum, Max: &maximum}}
+		}},
 		{name: "empty_ok without non_empty", mutate: func(m *Manifest) {
 			m.Response.Success = &SuccessSpec{EmptyOK: true}
 		}},
 		{name: "duplicate collection output", mutate: func(m *Manifest) {
 			m.Response.Collections = map[string]CollectionSpec{
 				"ok": {Path: "$.items", Fields: []string{"id"}},
+			}
+		}},
+		{name: "collection without projection", mutate: func(m *Manifest) {
+			m.Response.Collections = map[string]CollectionSpec{
+				"items": {Path: "$.items"},
+			}
+		}},
+		{name: "collection with fields and field paths", mutate: func(m *Manifest) {
+			m.Response.Collections = map[string]CollectionSpec{
+				"items": {Path: "$.items", Fields: []string{"id"}, FieldPaths: map[string]string{"name": "$.name"}},
 			}
 		}},
 	}
