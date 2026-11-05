@@ -188,3 +188,45 @@ func TestKeywordCapabilityHeaderBillingAndReserveFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestCapabilityDirectoryIncludesKeywordCapabilitiesAndExistingEntries(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ListCapabilities(ctx)
+
+	var response struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Billing struct {
+				MaxUSD float64 `json:"max_usd"`
+			} `json:"billing"`
+		} `json:"data"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode capability list: %v", err)
+	}
+	entries := make(map[string]float64, len(response.Data))
+	for _, item := range response.Data {
+		entries[item.ID] = item.Billing.MaxUSD
+	}
+	if len(entries) != 22 {
+		t.Fatalf("expected 22 directory entries, got %d", len(entries))
+	}
+	if entries["keyword-ideas-v1"] != 0.27 || entries["keyword-volume-v1"] != 0.16 {
+		t.Fatalf("new keyword capabilities have unexpected max_usd: %#v", entries)
+	}
+	for _, id := range []string{
+		"weather-v1",
+		"ssl-analyze-v1",
+		"web-unlock-v1",
+		"web-search-v1",
+		"domain-rank-overview-v1",
+		"backlinks-summary-v1",
+		"keyword-gap-v1",
+		"serp-google-v1",
+	} {
+		if _, ok := entries[id]; !ok {
+			t.Fatalf("existing capability %s is missing from directory", id)
+		}
+	}
+}
