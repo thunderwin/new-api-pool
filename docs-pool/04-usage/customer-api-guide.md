@@ -298,7 +298,7 @@ curl https://api.tokwork.com/v1/capabilities \
 - `mode`：`sync`（同步，一次请求拿结果）或 `async`（异步，提交后轮询）。**调用方式由它决定**。
 - `billing`：计费方式与单价（美元）。
 
-当前已上线（2026-11-05）：
+当前能力目录（2026-11-06 代码核实；线上发布状态以部署报告为准）：
 
 | ID | 模式 | 输入 | 输出 | 单价 |
 |---|---|---|---|---|
@@ -307,7 +307,7 @@ curl https://api.tokwork.com/v1/capabilities \
 | `web-unlock-v1` | 同步 | **必填** `url`；仅限 Wayfair 四个主域名及子域名的 HTTPS 页面 | `status`、`html` | $0.003 / 次 |
 | `web-search-v1` | 同步 | **必填** `query`；可选 `count`（默认 8，最大 20） | `results[]`：`title`、`url`、`snippet`、`summary`、`site_name`、`date` | $0.001 / 次；空结果免费 |
 
-搜索与 SEO 能力（AISA，按上游实际用量结算）：
+搜索与 SEO 能力（15 个经 AISA，按上游实际用量结算）：
 
 | ID | 用途 | 关键输入 | 单次上限 |
 |---|---|---|---|
@@ -324,11 +324,16 @@ curl https://api.tokwork.com/v1/capabilities \
 | `organic-competitors-v1` | 自然搜索竞品 | `target`、地区、语言、`limit` | $0.10 |
 | `ranked-keywords-v1` | 排名关键词 | `target`、地区、语言、`limit` | $0.30 |
 | `keyword-gap-v1` | 关键词差距 | `target1`、`target2` | $0.10 |
-| `keyword-ideas-v1` | 种子词扩展相关关键词 | `keywords`（1–20 个）、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.27 |
-| `keyword-volume-v1` | 关键词搜索量与 12 个月趋势 | `keywords`（1–200 个）、`location_name`、`language_code` | $0.16 |
-| `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth` | $0.05 |
 | `ai-brand-mentions-v1` | AI 品牌露出 | `target` 数组对象 | $0.20 |
 | `page-seo-audit-v1` | 单页 SEO 审计 | `url` | $0.03 |
+
+DataForSEO 直连关键词能力（按响应正文 `cost` 成本价结算）：
+
+| ID | 用途 | 关键输入 | 单次上限 |
+|---|---|---|---|
+| `keyword-ideas-v1` | 种子词扩展相关关键词 | `keywords`（1–20 个）、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.04 |
+| `keyword-volume-v1` | 关键词搜索量与 12 个月趋势 | `keywords`（1–200 个）、`location_name`、`language_code` | $0.04 |
+| `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth` | $0.21 |
 
 原有 AISA 能力的地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
 `keyword-ideas-v1` 和 `keyword-volume-v1` 使用 `location_name`，默认
@@ -476,8 +481,8 @@ curl https://api.tokwork.com/v1/capabilities/keyword-ideas-v1 \
       }
     ]
   },
-  "usage": { "unit": "micro_usd", "quantity": 132000 },
-  "cost_usd": 0.132
+  "usage": { "unit": "usd", "quantity": 0.018 },
+  "cost_usd": 0.018
 }
 ```
 
@@ -502,7 +507,8 @@ curl https://api.tokwork.com/v1/capabilities/keyword-volume-v1 \
   `intent`、`monthly_searches`。上游没有意图或历史数据时，对应字段为 `null`。
 - `monthly_searches` 是最近 12 个月的搜索量数组。`competition` 是上游的竞争等级
   （如 `LOW`、`MEDIUM`、`HIGH`）。
-- 单次上限分别是 $0.27 和 $0.16；实际费用仍按 `cost_usd` 和响应头成本结算。
+- 两个关键词能力单次上限都是 $0.04；实际费用按响应体 `cost` 结算。缺少 `cost` 时
+  按单次上限兜底，并在内部日志标记 `reserve_fallback`。
 
 **外链汇总示例**（`backlinks-summary-v1`）：
 
@@ -639,15 +645,16 @@ token 数以响应里的 `usage` 为准（流式请带 `stream_options.include_u
 
 - **图片模型**：按张计费，`/api/pricing` 中 `quota_type = 1`，单价即 `model_price`（美元 / 张）。
 - **Capability**：按 `GET /v1/capabilities` 里的 `billing` 计费；`price_usd = 0` 的能力免费，
-  余额为 0 也能调用。AISA 搜索/SEO 能力的 `unit` 是 `micro_usd`：
+  余额为 0 也能调用。AISA 搜索/SEO 能力的 `unit` 是 `micro_usd`；DataForSEO
+  直连关键词能力的 `unit` 是 `usd`：
 
 ```text
 cost_usd = price_usd × quantity × GroupRatio
 ```
 
-其中 `quantity` 是上游成功响应头里的实际微美元成本。当前
-`price_usd=0.000001`，即 1 倍成本价。`billing.max_usd` 是单次准入上限；
-它只阻止预估过高的请求，不保证最终扣费绝不超过该数字。成功但响应缺少成本头时，
+其中 AISA 的 `quantity` 是成功响应头里的实际微美元成本，`price_usd=0.000001`；
+DataForSEO 直连的 `quantity` 是响应体 `$.cost` 美元数，`price_usd=1`。两者都是
+1 倍成本价。`billing.max_usd` 是单次预扣和上限。成功但响应缺少成本字段或成本头时，
 平台按 `max_usd` 结算，并在内部消费日志标记 `reserve_fallback`；不会不扣费。
 
 `web-search-v1` 是 $0.001 / 次；HTTP 200 且没有搜索结果时按 0 次计费，

@@ -206,7 +206,7 @@ ssh root@2.31.8.21 'cd /opt/new-api-pool && docker compose build && docker compo
 > 否则 `go build` 会失败。线上设了 `FRONTEND_BASE_URL`，二进制里嵌的这套 SPA
 > 不会被服务（`https://api.tokwork.com/` 是 301，见 §3）。
 
-### Capability 环境变量（2026-11-04）
+### Capability 环境变量（2026-11-06）
 
 Capability 凭证值只写进服务器 `.env`：
 
@@ -216,10 +216,14 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
 | `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 与重建后的容器内均已设置） | **是** |
 | `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
+| `CAPABILITY_DATAFORSEO_LOGIN` | DataForSEO API login，供三个直连关键词能力使用 | **是** |
+| `CAPABILITY_DATAFORSEO_PASSWORD` | DataForSEO API password，供三个直连关键词能力使用 | **是** |
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
-`credential_error`；缺 AISA key 时 18 个 AISA 能力同样返回 `credential_error`。
+`credential_error`；缺 AISA key 时 15 个经 AISA 的能力同样返回 `credential_error`；
+DataForSEO login 或 password 任一缺失时，三个直连关键词能力在预扣前返回
+`credential_error`。
 缺 DeepSeek key 时 `web-search-v1` 返回 `credential_error`。
 这些情况都不会调用上游、不扣费。
 
@@ -230,6 +234,8 @@ cd /path/to/new-api-pool
 ./ops/deploy/set-capability-secret.sh
 ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
+./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_LOGIN
+./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_PASSWORD
 ```
 
 脚本默认目标 `root@2.31.8.21`、远端目录 `/opt/new-api-pool`，可用
@@ -332,8 +338,8 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 **已核实 2026-10-23 的流程：**
 
 1. 在 `new-api-pool/` 构建前端和 linux/amd64 后端，上传 `new-api`。
-2. 上传/更新 `ops/deploy/docker-compose.yml`，确认 Bright Data、AISA 和 DeepSeek 的 Capability 环境变量在
-   `new-api.environment` 中显式透传。
+2. 上传/更新 `ops/deploy/docker-compose.yml`，确认 Bright Data、AISA、DeepSeek 和
+   DataForSEO 的 Capability 环境变量在 `new-api.environment` 中显式透传。
 3. 服务器上先备份当前二进制、compose 和 `.env`，再构建/启动容器。
 4. 只读检查 `.env` 是否存在所需变量名，不打印值。
 5. 验证 `/api/status`、容器健康、`GET /v1/capabilities` 的能力目录和既有聊天回归。

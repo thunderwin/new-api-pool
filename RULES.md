@@ -3,7 +3,7 @@
 > 适用范围：New API fork（`new-api-pool/`）接入所有**非大模型**或**非 OpenAI/Anthropic/Gemini 原生协议**的第三方 API。
 > 状态：**强制规范**。新增第三方 API 必须先按本文件设计，不允许直接在 controller 里写一次性接口。
 >
-> 核实日期：2026-10-22。
+> 核实日期：2026-11-06。
 > 本文件区分三类内容：
 > - **现状（已核实）**：当前代码真实支持的能力
 > - **规则（强制）**：以后所有接入必须遵守
@@ -44,9 +44,12 @@
   它不是任意 JSON 的通用 REST 透传。
 - `relay/channel/task/` 已有 Sora / Kling / Suno / Vidu 等异步适配器，可作为异步 API 的参考实现。
 - 计费目前有按 token、按次（`ModelPrice`）、多规格（`ImageSizePrice`）和计费表达式。
-- 2026-11-05 已核实：Capability 层共有 22 个能力，其中 AISA 18 个；新增
-  `keyword-ideas-v1` 与 `keyword-volume-v1`。两个能力在预扣费前校验数组长度，
-  只投影声明的关键词字段，按 AISA 响应头微美元成本结算，单次上限分别为 $0.27 / $0.16。
+- 2026-11-06 已核实：Capability 层共有 22 个能力，其中 15 个经 AISA、3 个直连
+  DataForSEO。`keyword-ideas-v1`、`keyword-volume-v1`、`serp-google-v1` 已改走
+  `https://api.dataforseo.com/v3/...`，使用 HTTP Basic 鉴权和响应正文 `$.cost`
+  按成本价结算；公共 ID、输入、默认值、数量上限和 `output` 字段保持不变。
+  三个能力的单次 reserve 分别为 $0.04 / $0.04 / $0.21。是否已经发布到线上只能以
+  当次运维报告和部署记录为准；仓库代码改动本身不代表已上线。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -338,8 +341,8 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 - `request.headers`：发送 Manifest 声明的静态请求头；拒绝 `Authorization`、`Host`、
   `Content-Length`、Cookie 和 hop-by-hop 头。
 - `billing.quantity_header`：从成功响应头读取非负整数/小数用量，与 `quantity_path` 二选一。
-- `billing.reserve_usd`：同步 `per_unit` 的固定预扣额；响应缺少合法数量头时按该金额结算，
-  消费日志标记 `usage_source=reserve_fallback`。
+- `billing.reserve_usd`：同步 `per_unit` 的固定预扣额；数量头或 `quantity_path`
+  缺失/非法时按该金额结算，消费日志标记 `usage_source=reserve_fallback`。
 - `response.error_code_path` + `response.error_map`：按上游业务错误码或 HTTP 状态映射为稳定
   公共错误码和 HTTP 状态；用户响应不回传上游原始 message。
 - `/v1/capabilities` 的 `per_unit` 条目额外返回 `billing.max_usd`（等于 `reserve_usd`）。
@@ -358,7 +361,16 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 - `request.array_lengths`：在预扣费前校验输入必须是数组，并限制最小/最大元素数量。
 - `response.collections[].field_paths`：把对象数组元素的相对路径投影成扁平公共字段；
   缺失的可选路径输出 `null`，未声明字段不会进入公共输出。
-- 已接入 `keyword-ideas-v1` 和 `keyword-volume-v1`（AISA / DataForSEO，同步 `per_unit`）。
+- 已接入 `keyword-ideas-v1` 和 `keyword-volume-v1`；2026-11-06 起与
+  `serp-google-v1` 一起改为 DataForSEO 直连（同步 `per_unit`）。
+
+2026-11-06 新增的 Manifest 通用能力：
+
+- `auth.type=basic`：`secret_ref` 读用户名，`password_ref` 读密码，两个引用都必须是
+  `CAPABILITY_*` 环境变量；执行器生成 HTTP Basic Authorization，缺任一变量都在预扣前
+  返回 `credential_error`。
+- 同步 `per_unit` 的 `quantity_path` 缺失或非法时，如果声明了 `reserve_usd`，按 reserve
+  结算并记 `usage_source=reserve_fallback`，与数量头兜底语义一致。
 
 ---
 
@@ -513,8 +525,9 @@ limits:
 | 日志 | `logs` + capability/provider/usage 字段 |
 
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
-> （Bright Data Web Unlocker，同步）、18 个 AISA 搜索/SEO 能力和
-> `web-search-v1`（DeepSeek Search，同步）已接入。`weather-v1` 与
-> `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
+> （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、3 个
+> DataForSEO 直连关键词能力和 `web-search-v1`（DeepSeek Search，同步）已接入。
+> `weather-v1` 与 `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
+> DataForSEO 关键词能力按响应正文 `cost` 结算；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
 > 多供应商路由、后台 Manifest 编辑、SSE 流式仍在 Phase 2/3。

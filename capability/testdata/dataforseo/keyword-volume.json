@@ -1,0 +1,44 @@
+{
+  "version": "0.1.20261106",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2 sec.",
+  "cost": 0.01212,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "fixture-volume",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "cost": 0.01212,
+      "result_count": 1,
+      "result": [
+        {
+          "location_code": 2840,
+          "language_code": "en",
+          "items_count": 1,
+          "items": [
+            {
+              "keyword": "laufschuhe",
+              "keyword_info": {
+                "search_volume": 9900,
+                "cpc": 0.89,
+                "competition_level": "MEDIUM",
+                "monthly_searches": [
+                  {"year": 2026, "month": 10, "search_volume": 9900}
+                ]
+              },
+              "search_intent_info": {
+                "main_intent": "transactional"
+              },
+              "serp_info": {
+                "must_not_leak": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

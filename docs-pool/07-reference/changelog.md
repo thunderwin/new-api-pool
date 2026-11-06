@@ -13,6 +13,30 @@
 
 ---
 
+## v0.6.9 — 关键词能力切换 DataForSEO 直连（2026-11-06）
+
+| 类型 | 变更 |
+|---|---|
+| `*` | `keyword-ideas-v1`、`keyword-volume-v1`、`serp-google-v1` 从 AISA 转售改为 DataForSEO 直连；公共 ID、输入参数、默认值、数量上限和 `output` 字段不变 |
+| `*` | 三个能力改用 `https://api.dataforseo.com/v3/...`、HTTP Basic 鉴权，并移除 `X-AISA-Max-Price-USD` 等 AISA 专用请求头 |
+| `+` | Manifest `auth.type=basic`：`secret_ref` 与 `password_ref` 分别读取用户名和密码，引用必须以 `CAPABILITY_` 开头；缺任一变量在预扣前返回 `credential_error` |
+| `*` | 三个能力按响应体顶层 `$.cost` 以 1 倍成本价结算；缺 `cost` 时按 `reserve_usd` 兜底。ideas / volume / SERP reserve 分别为 $0.04 / $0.04 / $0.21 |
+| `+` | DataForSEO 错误映射覆盖鉴权失败、余额不足、频率限制、参数错误、上游不可用和超时；只对 HTTP 429/503 最多重试一次 |
+| `+` | compose 透传 `CAPABILITY_DATAFORSEO_LOGIN`、`CAPABILITY_DATAFORSEO_PASSWORD` |
+| `+` | 离线 fixture 逐字断言三份请求体迁移前后不变，并断言输出、成本结算、缺成本兜底、预扣前数量/凭据校验和敏感信息脱敏 |
+
+官方文档核实日期：2026-11-06。
+
+- 鉴权：<https://docs.dataforseo.com/v3/auth/>
+- Sandbox：<https://docs.dataforseo.com/v3/appendix/sandbox/>
+- Labs 定价：<https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api>
+- Google Organic 定价：<https://dataforseo.com/pricing/serp/google-organic-serp-api>
+
+本轮不调用真实 DataForSEO/AISA 付费接口。线上是否已发布、冒烟结果和回滚路径以当次
+部署报告为准；代码合并不等同于线上已切换。
+
+---
+
 ## v0.6.8 — AISA 关键词挖掘与搜索量 Capability（2026-11-05）
 
 | 类型 | 变更 |

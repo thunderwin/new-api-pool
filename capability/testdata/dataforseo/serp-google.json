@@ -1,0 +1,39 @@
+{
+  "version": "0.1.20261106",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.1 sec.",
+  "cost": 0.002,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "fixture-serp",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "cost": 0.002,
+      "result_count": 1,
+      "result": [
+        {
+          "keyword": "running shoes",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "items_count": 1,
+          "items": [
+            {
+              "type": "organic",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "domain": "example.com",
+              "title": "Example result",
+              "url": "https://example.com/running-shoes",
+              "description": "Fixture result"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

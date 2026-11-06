@@ -1,4 +1,4 @@
-# 第三方 Capability API（2026-11-05 更新）
+# 第三方 Capability API（2026-11-06 更新）
 
 > 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
@@ -24,6 +24,11 @@
 >
 > 2026-11-05 追加（已实现并离线核实）：新增 AISA DataForSEO `keyword-ideas-v1`
 > 和 `keyword-volume-v1`；通用 Manifest 支持输入数组长度预检和对象数组的相对字段路径投影。
+>
+> 2026-11-06 追加（已实现并离线核实）：`keyword-ideas-v1`、`keyword-volume-v1`、
+> `serp-google-v1` 改为 DataForSEO 直连，公共 ID、输入、默认值和输出字段不变；
+> 通用 Manifest 新增 HTTP Basic 鉴权，并支持从响应正文 `quantity_path` 读取成本，
+> 缺失时按 `reserve_usd` 兜底。线上发布状态以本次部署报告为准。
 
 ## 路由
 
@@ -76,6 +81,27 @@ POST /v1/capabilities/weather-v1
 | `headers` | 常量请求头。拒绝 `Authorization`、`Host`、`Content-Length`、Cookie 和 hop-by-hop 头，也拒绝非法名称和换行注入 |
 | `ranges` | 输入数值约束：`min`、`max`、`integer`。在预扣费和上游调用前校验，不是数字或超出范围返回 `400 invalid_request` |
 | `array_lengths` | 输入数组长度约束：`min`、`max`。在预扣费和上游调用前校验；不是数组或超出范围返回 `400 invalid_request` |
+
+### 鉴权
+
+Manifest 的 `auth.type` 支持 `bearer`、`header`、`query`、`basic`。凭证引用只写变量名，
+`secret_ref` 和 `password_ref` 必须匹配 `CAPABILITY_[A-Z0-9_]+`。
+
+HTTP Basic 用两个服务端变量，执行器自行拼出
+`Authorization: Basic base64(username:password)`：
+
+```json
+{
+  "auth": {
+    "type": "basic",
+    "secret_ref": "CAPABILITY_DATAFORSEO_LOGIN",
+    "password_ref": "CAPABILITY_DATAFORSEO_PASSWORD"
+  }
+}
+```
+
+任一变量缺失时，在预扣费和上游调用之前返回 `500 credential_error`。用户名和密码
+不会进入公共错误、消费日志或响应；调用方不能通过输入覆盖。
 
 `response` 还可声明：
 
@@ -147,9 +173,9 @@ GET /v1/tasks/task_...
 | `organic-competitors-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 自然搜索竞品 |
 | `ranked-keywords-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 域名排名关键词 |
 | `keyword-gap-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 两域名关键词交集/差距 |
-| `keyword-ideas-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 种子词扩展相关关键词 |
-| `keyword-volume-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 关键词搜索量与 12 个月趋势 |
-| `serp-google-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | Google 自然搜索 SERP |
+| `keyword-ideas-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 种子词扩展相关关键词 |
+| `keyword-volume-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 关键词搜索量与 12 个月趋势 |
+| `serp-google-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Google 自然搜索 SERP |
 | `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
 | `web-search-v1` | DeepSeek Search | 同步 | $0.001 / 次 | 网页搜索；空结果成功且免费 |
@@ -169,10 +195,10 @@ Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 - 输出：`{ "status": 200, "html": "<目标页面正文>" }`。
 - 超时 `90s`，最大响应 `8 MiB`；上游 `429/502/503/504` 最多再试一次。
 
-### AISA 搜索与 SEO 能力（2026-11-05）
+### AISA 搜索与 SEO 能力（15 个，2026-11-06）
 
 基址为 `https://api.aisa.one/apis/v1`，Bearer key 来自
-`CAPABILITY_AISA_API_KEY`。Manifest 只暴露白名单参数；DataForSEO 请求按 AISA 契约
+`CAPABILITY_AISA_API_KEY`。Manifest 只暴露白名单参数；经 AISA 转售的 DataForSEO 请求按 AISA 契约
 包成单元素数组。地区/语言默认为美国 (`location_code=2840`) / 英语 (`language_code=en`)，
 Similarweb 默认 `country=ww`、`granularity=monthly`。
 
@@ -191,9 +217,6 @@ Similarweb 默认 `country=ww`、`granularity=monthly`。
 | `organic-competitors-v1` | 自然搜索竞品；`target`、地区、语言、`limit` | $0.10 |
 | `ranked-keywords-v1` | 排名关键词；`target`、地区、语言、`limit` | $0.30 |
 | `keyword-gap-v1` | 关键词差距；`target1`、`target2`、地区、语言 | $0.10 |
-| `keyword-ideas-v1` | 1–20 个种子词扩展相关关键词；`keywords`、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.27 |
-| `keyword-volume-v1` | 1–200 个关键词的搜索量、CPC、竞争度、意图和 12 个月趋势；`keywords`、`location_name`、`language_code` | $0.16 |
-| `serp-google-v1` | Google SERP；`keyword`、地区、语言、设备、`depth` | $0.05 |
 | `ai-brand-mentions-v1` | AI 品牌露出；`target` 必须是 `[{"domain":"..."}]` 或 `[{"keyword":"..."}]` | $0.20 |
 | `page-seo-audit-v1` | 单页审计；`url`，JS/浏览器渲染默认关闭 | $0.03 |
 
@@ -201,30 +224,6 @@ Similarweb 默认 `country=ww`、`granularity=monthly`。
 平台仍按成功响应头 `X-AISA-Customer-Cost-Micros-USD` 的实际值结算。
 Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上游重复 key
 返回 409，不重放原结果。AISA 只对 429/503 最多重试一次，不对 200 或 502 重试。
-
-2026-11-05 新增的两个关键词能力使用 `location_name` 而不是 `location_code`，
-默认 `United States` / `en`，可覆盖为 `Germany` / `de` 等。单批关键词数在预扣费前校验：
-`keyword-ideas-v1` 最多 20 个种子词，`keyword-volume-v1` 最多 200 个关键词；超出返回
-`400 invalid_request`。
-
-两个能力只返回 `keywords[]`，每项固定为 `keyword`、`search_volume`、`cpc`、
-`competition`、`intent`、`monthly_searches` 六个声明字段。上游没有意图或趋势数据时
-对应字段为 `null`，不会把 DataForSEO 的 `keyword_info`、`serp_info` 等大块原始结构返回给调用方。
-
-2026-11-05 免费 quote 结果：
-
-- `keyword-ideas-v1` 默认 1 个种子词、50 条结果：HTTP 200，预估 `$0.132000`；
-- `keyword-volume-v1` 1 个关键词：HTTP 200，预估 `$0.078480`；
-- `keyword-volume-v1` 200 个关键词：HTTP 200，预估仍为 `$0.078480`；
-- 备选 Google Ads Search Volume 200 个关键词：HTTP 200，预估 `$0.090000`，但缺少搜索意图，
-  因此没有选用。
-
-这些 quote 只用于确定上限，不代表真实调用成功或最终账单。
-
-`serp-google-v1` 当前输出完整 DataForSEO `result`，因此如果目标 SERP 含
-`people_also_ask`，基础问题项会保留在 `output.result[0].items[]` 中。当前没有暴露
-`people_also_ask_click_depth`，不能请求展开的追问层级；要稳定支持展开，需要新增白名单参数、
-重新 quote 上限并补 fixture 测试。
 
 2026-10-29 对 16 个能力的默认请求逐个执行免费 quote：全部 HTTP 200 且返回
 `object=cost_estimate`。默认预估合计 `$3.625236`；单次预估范围为
@@ -236,6 +235,51 @@ Similarweb 的客户 `idempotency_key` 会作为 `Idempotency-Key` 发送；上�
 `domain-rank-overview-v1` 与 `backlinks-summary-v1`（目标 `wikipedia.org`）均为 200，
 实际分别产生 12,120 / 24,036 微美元上游成本；`cost_usd`、消费日志和余额变化一致。
 AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做付费调用。
+
+### DataForSEO 直连关键词能力（2026-11-06）
+
+官方文档和价格核实日期：2026-11-06。
+
+- 基址：`https://api.dataforseo.com/v3`；sandbox 为 `https://sandbox.dataforseo.com/v3`。
+- 鉴权：HTTP Basic；用户名来自 `CAPABILITY_DATAFORSEO_LOGIN`，密码来自
+  `CAPABILITY_DATAFORSEO_PASSWORD`。调用方不能传入或覆盖凭证。
+- 请求仍按 DataForSEO 的单元素数组格式发送；AISA 专用请求头和 cost mode 已移除。
+- 成功条件：顶层请求成功且 `$.tasks.0.status_code == 20000`。
+- 计费：`per_unit`、`unit=usd`、`price_usd=1`，读取响应体顶层 `$.cost`，按成本价结算。
+  缺失 `cost` 时按 `reserve_usd` 结算，日志记 `usage_source=reserve_fallback`。
+- 重试：仅 HTTP 429/503 最多再试一次；收到 2xx 后不按内部状态重试。
+
+| ID | 输入与输出契约 | 单次上限 |
+|---|---|---|
+| `keyword-ideas-v1` | 1–20 个 `keywords`；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 50，最大 200）、`offset`（默认 0）；输出 `keywords[]` 六个字段 | $0.04 |
+| `keyword-volume-v1` | 1–200 个 `keywords`；可选 `location_name`、`language_code`；`keywords` 默认 1 条；输出 `keywords[]` 六个字段 | $0.04 |
+| `serp-google-v1` | `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`）、`device`（默认 `desktop`）、`depth`（默认 10，官方最大 200）、`os`（默认 `windows`）、`calculate_rectangles`（默认 `false`）；输出 `result` | $0.21 |
+
+价格依据：
+
+- DataForSEO Labs Google 通用端点为每任务 `$0.012` + 每项 `$0.00012`。
+  ideas 在 `limit=200` 时约 `$0.036`；volume 在 200 个关键词时约 `$0.036`。
+  两者 reserve 取整为 `$0.04`。
+- Google Organic Live 为每个最多 10 条结果的 SERP `$0.002`。`depth=200` 为 20 个
+  SERP、`calculate_rectangles=true` 再加一个基础价；关键词带搜索操作符时再乘 5，
+  上限约 `$0.202`，reserve 取 `$0.21`。
+- 官方价格页：
+  <https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api>、
+  <https://dataforseo.com/pricing/serp/google-organic-serp-api>。
+
+DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态码 40100（鉴权）、
+40200/40210（余额）、40202/40209（限流）、40501/40503/40506（请求参数）、
+50000/503xx（上游不可用）和 50401（超时）。公共错误只返回稳定文案，不回传
+`status_message`。
+
+`keyword-ideas-v1` 与 `keyword-volume-v1` 使用 `location_name`，默认
+`United States` / `en`，可覆盖为 `Germany` / `de`。两个能力只返回 `keywords[]`，
+每项固定为 `keyword`、`search_volume`、`cpc`、`competition`、`intent`、
+`monthly_searches`；上游没有意图或趋势数据时输出 `null`。
+
+`serp-google-v1` 继续输出完整 DataForSEO `result`。目标 SERP 含 `people_also_ask`
+时基础问题项保留在 `output.result[0].items[]`；当前仍未暴露
+`people_also_ask_click_depth`，不能请求展开追问层级。
 
 ### `web-search-v1`（DeepSeek Search，2026-11-04）
 
@@ -280,7 +324,8 @@ DeepSeek 官方当前写的是每 1,000 次成功 Search 收 **$0.75**（约 ¥5
 - `per_call`：提交/执行前预扣；同步成功结算，失败退款。
 - `per_unit`：同步支持按上游返回的 `quantity_path` 或 `quantity_header` 结算；
   两者只能声明一个。响应头数字必须是非负整数或小数。
-- 同步 `per_unit` 可声明 `reserve_usd`：调用前固定预扣该金额；成功但数量头缺失或非法时，
+- 同步 `per_unit` 可声明 `reserve_usd`：调用前固定预扣该金额；成功但数量头或
+  `quantity_path` 缺失/非法时，
   按 `reserve_usd` 结算，消费日志的 `usage_source=reserve_fallback`，不返回 502。
   数量头为 `0` 时按 0 结算。失败仍全额退款。
 - 异步 `per_unit`：manifest 必须声明 `estimate_path`，提交时按预估量预扣；
@@ -310,6 +355,12 @@ price_usd × quantity × QuotaPerUnit × GroupRatio
 本批能力因此保留 `reserve_usd` 兜底。`X-AISA-Max-Price-USD` 只是准入检查。
 AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficient`；客户收到
 `503 upstream_unavailable`，维护者需要给 AISA 账户充值。
+
+### DataForSEO 按响应体成本计价
+
+DataForSEO 三个直连能力的 `billing.quantity_path` 是 `$.cost`，
+`billing.unit=usd`、`billing.price_usd=1`。返回值就是该次任务实际花费的美元数，
+平台按 1 倍成本价计费。成本缺失时使用 Manifest 的 `reserve_usd`；上限见上面直连能力表。
 
 ### 付费调用生命周期与失败计费（2026-10-29 已核实）
 

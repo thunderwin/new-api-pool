@@ -449,11 +449,8 @@ func TestEmbeddedAISAManifests(t *testing.T) {
 		"organic-competitors-v1",
 		"ranked-keywords-v1",
 		"keyword-gap-v1",
-		"serp-google-v1",
 		"ai-brand-mentions-v1",
 		"page-seo-audit-v1",
-		"keyword-ideas-v1",
-		"keyword-volume-v1",
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -714,6 +711,26 @@ func TestManifestRejectsUnsafeRequestExtensions(t *testing.T) {
 		{name: "collection with fields and field paths", mutate: func(m *Manifest) {
 			m.Response.Collections = map[string]CollectionSpec{
 				"items": {Path: "$.items", Fields: []string{"id"}, FieldPaths: map[string]string{"name": "$.name"}},
+			}
+		}},
+		{name: "unsupported auth type", mutate: func(m *Manifest) {
+			m.Auth = &AuthSpec{Type: "digest", SecretRef: "CAPABILITY_TEST_KEY"}
+		}},
+		{name: "basic without password ref", mutate: func(m *Manifest) {
+			m.Auth = &AuthSpec{Type: "basic", SecretRef: "CAPABILITY_TEST_LOGIN"}
+		}},
+		{name: "basic with invalid login ref", mutate: func(m *Manifest) {
+			m.Auth = &AuthSpec{
+				Type:        "basic",
+				SecretRef:   "TEST_LOGIN",
+				PasswordRef: "CAPABILITY_TEST_PASSWORD",
+			}
+		}},
+		{name: "basic with invalid password ref", mutate: func(m *Manifest) {
+			m.Auth = &AuthSpec{
+				Type:        "basic",
+				SecretRef:   "CAPABILITY_TEST_LOGIN",
+				PasswordRef: "TEST_PASSWORD",
 			}
 		}},
 	}

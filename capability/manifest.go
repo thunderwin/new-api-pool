@@ -38,10 +38,11 @@ type Manifest struct {
 }
 
 type AuthSpec struct {
-	Type      string `json:"type"` // bearer | header | query
-	SecretRef string `json:"secret_ref"`
-	Header    string `json:"header,omitempty"`
-	Query     string `json:"query,omitempty"`
+	Type        string `json:"type"` // bearer | header | query | basic
+	SecretRef   string `json:"secret_ref"`
+	PasswordRef string `json:"password_ref,omitempty"`
+	Header      string `json:"header,omitempty"`
+	Query       string `json:"query,omitempty"`
 }
 
 type RequestSpec struct {
@@ -162,6 +163,7 @@ type IdempotencySpec struct {
 
 var manifestIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$`)
 var headerFieldNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
+var capabilityEnvPattern = regexp.MustCompile(`^CAPABILITY_[A-Z0-9_]+$`)
 
 var forbiddenStaticHeaders = map[string]struct{}{
 	"authorization":       {},
@@ -201,6 +203,11 @@ func (m *Manifest) Validate() error {
 	}
 	if m.Billing.ReserveUSD < 0 {
 		return fmt.Errorf("manifest %s: reserve_usd cannot be negative", m.ID)
+	}
+	for _, auth := range manifestAuthSpecs(m) {
+		if err := auth.Validate(); err != nil {
+			return fmt.Errorf("manifest %s: %w", m.ID, err)
+		}
 	}
 	if m.Billing.Type == BillingPerUnit &&
 		strings.TrimSpace(m.Billing.QuantityPath) == "" &&
@@ -359,6 +366,69 @@ func (m *Manifest) Validate() error {
 		if m.Poll == nil || strings.TrimSpace(m.Poll.Endpoint) == "" ||
 			m.Poll.StatusPath == "" || m.Poll.ResultPath == "" {
 			return fmt.Errorf("manifest %s: async poll.endpoint, status_path and result_path are required", m.ID)
+		}
+	}
+	return nil
+}
+
+func manifestAuthSpecs(m *Manifest) []*AuthSpec {
+	if m == nil {
+		return nil
+	}
+	authSpecs := []*AuthSpec{m.Auth}
+	if m.Submit != nil {
+		authSpecs = append(authSpecs, m.Submit.Auth)
+	}
+	if m.Poll != nil {
+		authSpecs = append(authSpecs, m.Poll.Auth)
+	}
+	if m.Content != nil {
+		authSpecs = append(authSpecs, m.Content.Auth)
+	}
+	return authSpecs
+}
+
+func (a *AuthSpec) Validate() error {
+	if a == nil || strings.TrimSpace(a.Type) == "" {
+		return nil
+	}
+	typeName := strings.ToLower(strings.TrimSpace(a.Type))
+	validateRef := func(field string, value string) error {
+		ref := strings.TrimSpace(value)
+		if ref == "" {
+			return fmt.Errorf("auth.%s is required", field)
+		}
+		if !capabilityEnvPattern.MatchString(ref) {
+			return fmt.Errorf("auth.%s must match CAPABILITY_[A-Z0-9_]+", field)
+		}
+		return nil
+	}
+	switch typeName {
+	case "bearer", "header", "query":
+		if err := validateRef("secret_ref", a.SecretRef); err != nil {
+			return err
+		}
+	case "basic":
+		if err := validateRef("secret_ref", a.SecretRef); err != nil {
+			return err
+		}
+		if err := validateRef("password_ref", a.PasswordRef); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported auth type %q", a.Type)
+	}
+	switch typeName {
+	case "header":
+		if strings.TrimSpace(a.Header) == "" {
+			return fmt.Errorf("header auth requires header")
+		}
+		if err := validateHeaderName(strings.TrimSpace(a.Header)); err != nil {
+			return err
+		}
+	case "query":
+		if strings.TrimSpace(a.Query) == "" {
+			return fmt.Errorf("query auth requires query")
 		}
 	}
 	return nil

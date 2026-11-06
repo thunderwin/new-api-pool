@@ -3,6 +3,7 @@ package capability
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -623,6 +624,7 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 		}
 		if m.Response != nil && m.Response.Success != nil {
 			if successErr := validateResponseSuccess(m.Response.Success, parsed); successErr != nil {
+				successErr = mapResponseStatusError(m.Response, successErr, parsed)
 				// A 2xx response may already be billed. Never retry after it was
 				// received, even when its business status is a known retry value.
 				return nil, nil, resp.StatusCode, upstreamID, attachResponseMetadata(
@@ -793,6 +795,25 @@ func mapUpstreamHTTPError(spec *ResponseSpec, body []byte, status int) *Executio
 	return fallback
 }
 
+func mapResponseStatusError(spec *ResponseSpec, execErr *ExecutionError, raw map[string]any) *ExecutionError {
+	if execErr == nil || spec == nil || spec.Success == nil || len(spec.ErrorMap) == 0 {
+		return execErr
+	}
+	value, ok := Lookup(raw, spec.Success.Path)
+	if !ok {
+		return execErr
+	}
+	code, ok := StringValue(value)
+	if !ok {
+		return execErr
+	}
+	mapping, ok := spec.ErrorMap[code]
+	if !ok {
+		return execErr
+	}
+	return executionErrorFromMapping(mapping)
+}
+
 func executionErrorFromMapping(mapping ErrorMapSpec) *ExecutionError {
 	logCode := strings.TrimSpace(mapping.LogCode)
 	if logCode == "" {
@@ -908,22 +929,18 @@ func validateEnvironment(m *Manifest) *ExecutionError {
 		if auth == nil || strings.TrimSpace(auth.Type) == "" {
 			return nil
 		}
-		if strings.TrimSpace(auth.SecretRef) == "" || strings.TrimSpace(os.Getenv(auth.SecretRef)) == "" {
-			return credentialError()
+		refs := []string{auth.SecretRef}
+		if strings.EqualFold(strings.TrimSpace(auth.Type), "basic") {
+			refs = append(refs, auth.PasswordRef)
+		}
+		for _, ref := range refs {
+			if strings.TrimSpace(ref) == "" || strings.TrimSpace(os.Getenv(ref)) == "" {
+				return credentialError()
+			}
 		}
 		return nil
 	}
-	authSpecs := []*AuthSpec{m.Auth}
-	if m.Submit != nil {
-		authSpecs = append(authSpecs, m.Submit.Auth)
-	}
-	if m.Poll != nil {
-		authSpecs = append(authSpecs, m.Poll.Auth)
-	}
-	if m.Content != nil {
-		authSpecs = append(authSpecs, m.Content.Auth)
-	}
-	for _, auth := range authSpecs {
+	for _, auth := range manifestAuthSpecs(m) {
 		if err := checkAuth(auth); err != nil {
 			return err
 		}
@@ -1037,25 +1054,41 @@ func applyAuth(req *http.Request, auth *AuthSpec) error {
 	if auth == nil || auth.Type == "" {
 		return nil
 	}
-	secret := strings.TrimSpace(os.Getenv(auth.SecretRef))
-	if secret == "" {
-		return fmt.Errorf("missing secret %s", auth.SecretRef)
-	}
-	switch auth.Type {
+	switch strings.ToLower(strings.TrimSpace(auth.Type)) {
 	case "bearer":
+		secret := os.Getenv(auth.SecretRef)
+		if strings.TrimSpace(secret) == "" {
+			return fmt.Errorf("bearer auth credential is missing")
+		}
 		req.Header.Set("Authorization", "Bearer "+secret)
 	case "header":
+		secret := os.Getenv(auth.SecretRef)
+		if strings.TrimSpace(secret) == "" {
+			return fmt.Errorf("header auth credential is missing")
+		}
 		if auth.Header == "" {
 			return fmt.Errorf("header auth requires header")
 		}
 		req.Header.Set(auth.Header, secret)
 	case "query":
+		secret := os.Getenv(auth.SecretRef)
+		if strings.TrimSpace(secret) == "" {
+			return fmt.Errorf("query auth credential is missing")
+		}
 		if auth.Query == "" {
 			return fmt.Errorf("query auth requires query")
 		}
 		q := req.URL.Query()
 		q.Set(auth.Query, secret)
 		req.URL.RawQuery = q.Encode()
+	case "basic":
+		username := os.Getenv(auth.SecretRef)
+		password := os.Getenv(auth.PasswordRef)
+		if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
+			return fmt.Errorf("basic auth credentials are missing")
+		}
+		credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+		req.Header.Set("Authorization", "Basic "+credentials)
 	default:
 		return fmt.Errorf("unsupported auth type %s", auth.Type)
 	}

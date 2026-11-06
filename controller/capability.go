@@ -598,6 +598,16 @@ func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw
 		}
 	}
 	value, ok := capability.Lookup(raw, m.Billing.QuantityPath)
+	quantity, quantityOK := capability.NumberValue(value)
+	if !ok || !quantityOK || quantity < 0 {
+		if m.Billing.ReserveUSD > 0 {
+			fallbackQuantity := 0.0
+			if m.Billing.PriceUSD > 0 {
+				fallbackQuantity = m.Billing.ReserveUSD / m.Billing.PriceUSD
+			}
+			return usdToQuota(m.Billing.ReserveUSD, priceData.GroupRatioInfo.GroupRatio), unit, fallbackQuantity, "reserve_fallback", nil
+		}
+	}
 	if !ok {
 		return 0, unit, 0, "response_body", &capability.ExecutionError{
 			Code:       "missing_usage",
@@ -605,8 +615,7 @@ func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw
 			HTTPStatus: http.StatusBadGateway,
 		}
 	}
-	quantity, ok := capability.NumberValue(value)
-	if !ok || quantity < 0 {
+	if !quantityOK || quantity < 0 {
 		return 0, unit, 0, "response_body", &capability.ExecutionError{
 			Code:       "invalid_usage",
 			Message:    "upstream returned an invalid billing quantity",

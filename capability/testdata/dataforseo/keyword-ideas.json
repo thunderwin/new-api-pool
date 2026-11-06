@@ -1,0 +1,54 @@
+{
+  "version": "0.1.20261106",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2 sec.",
+  "cost": 0.018,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "fixture-ideas",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "cost": 0.018,
+      "result_count": 1,
+      "result": [
+        {
+          "seed_keywords": ["running shoes"],
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 2,
+          "items_count": 2,
+          "items": [
+            {
+              "keyword": "running shoes",
+              "keyword_info": {
+                "search_volume": 12100,
+                "cpc": 1.25,
+                "competition_level": "HIGH",
+                "monthly_searches": [
+                  {"year": 2026, "month": 10, "search_volume": 12000}
+                ]
+              },
+              "search_intent_info": {
+                "main_intent": "commercial"
+              },
+              "serp_info": {
+                "must_not_leak": true
+              }
+            },
+            {
+              "keyword": "trail shoes",
+              "keyword_info": {
+                "search_volume": 2400,
+                "cpc": 0.75,
+                "competition_level": "MEDIUM"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
