@@ -470,6 +470,30 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 付费调用 | 未执行；本次只做离线测试和免费 quote |
 | 回滚 | 未触发 |
 
+#### 2026-11-06 发布 DataForSEO 关键词直连
+
+> 以下为已核实事实。三个能力的公共 ID、输入、默认值、数量上限和 `output` 未变。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `72b8ec52` |
+| 开始时间 | `2026-11-06T01:33:44Z` |
+| 新容器启动 | `2026-11-06T01:33:49Z` |
+| 重建窗口 | `2026-11-06T01:33:44Z` → `01:33:55Z`，约 11 秒 |
+| 二进制 SHA-256 | `80db8c6100d551eb6adc56a62a9d1ccea7088b50e16eebdc63f2bbfa10c3b2c5` |
+| compose SHA-256 | `7f50f6b55749bc6a44be0d2ea3b68ae2f5b374b06b00c34a97f8f3bce54c73ed` |
+| 容器内 `/new-api` SHA-256 | 与服务器主机二进制相同 |
+| 回滚备份 | `new-api.bak-20261106-013217`、`docker-compose.yml.bak-20261106-013217`、`.env.bak-20261106-013217` |
+| 凭据 | `.env` 中 `CAPABILITY_DATAFORSEO_LOGIN`、`CAPABILITY_DATAFORSEO_PASSWORD` 名称计数各为 1；未读取或输出值 |
+| 健康 | `new-api-app` healthy；公开 `/api/status` 返回 200；近期日志无 panic/fatal/ERROR |
+| 沙箱冒烟 | 容器内使用同一套 Basic 凭据请求 DataForSEO sandbox `keyword_overview`：HTTP 200，`status_code=20000` |
+| 无 token 鉴权 | 三个关键词能力的 `POST /v1/capabilities/...` 均返回 401 |
+| 能力目录 | 同一二进制的离线目录回归为 22 个；三个能力 `max_usd=0.04/0.04/0.21`，原有能力仍在 |
+| 天气回归 | 同一二进制的离线执行器 fixture 回归通过 |
+| 付费调用 | 未执行；只调用免费 sandbox |
+| 鉴权后线上检查 | `/v1/models`、`/v1/capabilities` 和 `weather-v1` 需要用户 token；按凭据红线未读取或导出 token，因此未做鉴权后线上调用 |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。

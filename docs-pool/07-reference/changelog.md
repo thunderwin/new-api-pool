@@ -35,6 +35,19 @@
 本轮不调用真实 DataForSEO/AISA 付费接口。线上是否已发布、冒烟结果和回滚路径以当次
 部署报告为准；代码合并不等同于线上已切换。
 
+### 线上验证
+
+- 发布提交 `72b8ec52`；二进制 SHA-256
+  `80db8c6100d551eb6adc56a62a9d1ccea7088b50e16eebdc63f2bbfa10c3b2c5`
+- 重建窗口 `2026-11-06T01:33:44Z` → `01:33:55Z`，约 11 秒；容器 healthy，
+  公开 `/api/status` 200，近期启动日志无 panic/fatal/ERROR
+- DataForSEO sandbox `keyword_overview`：HTTP 200、`status_code=20000`；未产生费用
+- 未带 token 调用三个能力均返回 401；同一二进制离线目录回归为 22 个能力，
+  `max_usd=0.04/0.04/0.21`，原有能力仍在，天气执行器 fixture 通过
+- 未执行鉴权后的线上模型目录、能力目录和天气调用；按凭据红线未读取用户 token
+- 回滚未触发；备份为 `new-api.bak-20261106-013217`、
+  `docker-compose.yml.bak-20261106-013217`、`.env.bak-20261106-013217`
+
 ---
 
 ## v0.6.8 — AISA 关键词挖掘与搜索量 Capability（2026-11-05）
