@@ -494,6 +494,29 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 鉴权后线上检查 | `/v1/models`、`/v1/capabilities` 和 `weather-v1` 需要用户 token；按凭据红线未读取或导出 token，因此未做鉴权后线上调用 |
 | 回滚 | 未触发 |
 
+#### 2026-11-11 关键词能力返回关键词难度
+
+> 以下为已核实事实。只换二进制；compose 与 `.env` 未改，请求体、输入、上限和计费不变。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `a7c56276` |
+| 部署前核对 | 服务器二进制与 compose 的 SHA-256 前缀分别为 `80db8c6100d5`、`7f50f6b55749`，与 2026-11-06 记录一致 |
+| 开始时间 | `2026-11-11T13:02:23Z` |
+| 新容器启动 | `2026-11-11T13:02:29Z` |
+| 重建窗口 | `2026-11-11T13:02:23Z` → `13:02:35Z`（healthy），约 12 秒 |
+| 二进制 SHA-256 | `d8d5c889664098074eb0c385950f99574fe2168ee4b0fb353ca94b23da682f05` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| compose | 未改动（SHA-256 前缀 `7f50f6b55749`） |
+| 回滚备份 | `new-api.bak-20261111-130223`、`docker-compose.yml.bak-20261111-130223`、`.env.bak-20261111-130223` |
+| 健康 | `new-api-app` healthy；公开 `/api/status` 返回 200；新容器日志只有两条本次无 token 探测产生的 `Invalid token`，无 panic/fatal |
+| 无 token 鉴权 | `keyword-ideas-v1`、`keyword-volume-v1` 的 `POST /v1/capabilities/...` 均返回 401 |
+| 沙箱冒烟 | 容器内用同一套 Basic 凭据请求 DataForSEO sandbox `keyword_overview` 与 `keyword_ideas`：`status_code=20000`，条目含 `keyword_properties.keyword_difficulty`（整数），与 Manifest 路径一致 |
+| 离线回归 | 同一提交 `go test ./capability/... ./controller/...` 通过，含有难度/缺难度两种输出 fixture |
+| 付费调用 | 未执行；只调用免费 sandbox |
+| 鉴权后线上检查 | 需要用户 token；按凭据红线未读取或导出 token，未做鉴权后线上调用 |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
