@@ -2,7 +2,7 @@
   "id": "keyword-ideas-v1",
   "provider": "dataforseo",
   "mode": "sync",
-  "description": "Expands 1-20 seed keywords into related ideas with search volume, CPC, competition, optional intent, and 12-month history; customize keywords, location_name, language_code, limit (default 50, max 200), and offset; billed at DataForSEO cost, up to $0.04 per call.",
+  "description": "Expands 1-20 seed keywords into related ideas with search volume, CPC, competition, keyword difficulty (0-100), optional intent, and 12-month history; customize keywords, location_name, language_code, limit (default 50, max 200), and offset; billed at DataForSEO cost, up to $0.04 per call.",
   "endpoint": "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live",
   "method": "POST",
   "auth": {
@@ -66,6 +66,7 @@
           "search_volume": "$.keyword_info.search_volume",
           "cpc": "$.keyword_info.cpc",
           "competition": "$.keyword_info.competition_level",
+          "keyword_difficulty": "$.keyword_properties.keyword_difficulty",
           "intent": "$.search_intent_info.main_intent",
           "monthly_searches": "$.keyword_info.monthly_searches"
         }

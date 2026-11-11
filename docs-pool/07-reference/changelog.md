@@ -13,6 +13,22 @@
 
 ---
 
+## v0.6.10 — 关键词能力返回关键词难度（2026-11-11）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | `keyword-ideas-v1`、`keyword-volume-v1` 的 `keywords[]` 新增 `keyword_difficulty`，映射 DataForSEO `$.keyword_properties.keyword_difficulty`（0–100 整数）；上游缺失时为 `null` |
+| `*` | 两个能力的描述写明返回关键词难度；请求体、输入、默认值、数量上限、reserve 和计费不变 |
+| `+` | 离线 fixture 增加 `keyword_properties`，断言有难度和缺难度两种输出 |
+
+官方文档核实日期：2026-11-11。两个端点默认返回 `keyword_properties.keyword_difficulty`，
+无需额外参数，也不改变价格：
+
+- <https://docs.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live/>
+- <https://docs.dataforseo.com/v3/dataforseo_labs/google/keyword_overview/live/>
+
+---
+
 ## v0.6.9 — 关键词能力切换 DataForSEO 直连（2026-11-06）
 
 | 类型 | 变更 |

@@ -48,6 +48,8 @@
   DataForSEO。`keyword-ideas-v1`、`keyword-volume-v1`、`serp-google-v1` 已改走
   `https://api.dataforseo.com/v3/...`，使用 HTTP Basic 鉴权和响应正文 `$.cost`
   按成本价结算；公共 ID、输入、默认值、数量上限和 `output` 字段保持不变。
+  2026-11-11 起 ideas / volume 的 `keywords[]` 新增 `keyword_difficulty`
+  （0–100，取自上游 `keyword_properties`，不额外计费），其余字段不变。
   三个能力的单次 reserve 分别为 $0.04 / $0.04 / $0.21。是否已经发布到线上只能以
   当次运维报告和部署记录为准；仓库代码改动本身不代表已上线。
 

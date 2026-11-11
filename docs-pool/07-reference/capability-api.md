@@ -251,8 +251,8 @@ AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做�
 
 | ID | 输入与输出契约 | 单次上限 |
 |---|---|---|
-| `keyword-ideas-v1` | 1–20 个 `keywords`；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 50，最大 200）、`offset`（默认 0）；输出 `keywords[]` 六个字段 | $0.04 |
-| `keyword-volume-v1` | 1–200 个 `keywords`；可选 `location_name`、`language_code`；`keywords` 默认 1 条；输出 `keywords[]` 六个字段 | $0.04 |
+| `keyword-ideas-v1` | 1–20 个 `keywords`；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 50，最大 200）、`offset`（默认 0）；输出 `keywords[]` 七个字段 | $0.04 |
+| `keyword-volume-v1` | 1–200 个 `keywords`；可选 `location_name`、`language_code`；`keywords` 默认 1 条；输出 `keywords[]` 七个字段 | $0.04 |
 | `serp-google-v1` | `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`）、`device`（默认 `desktop`）、`depth`（默认 10，官方最大 200）、`os`（默认 `windows`）、`calculate_rectangles`（默认 `false`）；输出 `result` | $0.21 |
 
 价格依据：
@@ -274,8 +274,11 @@ DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态�
 
 `keyword-ideas-v1` 与 `keyword-volume-v1` 使用 `location_name`，默认
 `United States` / `en`，可覆盖为 `Germany` / `de`。两个能力只返回 `keywords[]`，
-每项固定为 `keyword`、`search_volume`、`cpc`、`competition`、`intent`、
-`monthly_searches`；上游没有意图或趋势数据时输出 `null`。
+每项固定为 `keyword`、`search_volume`、`cpc`、`competition`、`keyword_difficulty`、
+`intent`、`monthly_searches`；上游没有难度、意图或趋势数据时输出 `null`。
+`keyword_difficulty` 取自 DataForSEO 的 `keyword_properties.keyword_difficulty`，
+为 0–100 的整数（对数刻度，越高越难进前十）。两个端点默认返回该字段，
+不需要额外参数也不额外收费（官方文档核实日期：2026-11-11）。
 
 `serp-google-v1` 继续输出完整 DataForSEO `result`。目标 SERP 含 `people_also_ask`
 时基础问题项保留在 `output.result[0].items[]`；当前仍未暴露

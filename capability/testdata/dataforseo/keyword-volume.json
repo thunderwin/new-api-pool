@@ -29,6 +29,9 @@
                   {"year": 2026, "month": 10, "search_volume": 9900}
                 ]
               },
+              "keyword_properties": {
+                "keyword_difficulty": 41
+              },
               "search_intent_info": {
                 "main_intent": "transactional"
               },
