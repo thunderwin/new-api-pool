@@ -517,6 +517,26 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 鉴权后线上检查 | 需要用户 token；按凭据红线未读取或导出 token，未做鉴权后线上调用 |
 | 回滚 | 未触发 |
 
+#### 2026-11-17 Wokey 上 Claude 缓存读写计费修复
+
+> 以下为已核实事实。换二进制，并定点改了一项定价 option；compose 与 `.env` 未改。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `b752eb20`（changelog v0.6.11） |
+| 部署前核对 | 服务器旧二进制 SHA-256 前缀 `d8d5c8896640`，与 2026-11-11 记录一致 |
+| 定价 option | 只改 `CreateCacheRatio` 里的 Claude 各项：2.0（1 小时写价）→ 1.25（5 分钟写价），新增 `claude-fable-5-2`；GPT 各项未动。改前备份 `CreateCacheRatio.bak-20261117-101801.json`，直接改库，随容器重启生效。没跑定价同步脚本的 `--apply`：它会整体替换价目表，删掉不在 Wokey 的在售模型 |
+| 开始时间 | `2026-11-17T10:18:24Z`（备份） |
+| 新容器启动 | `2026-11-17T10:18:57Z` |
+| 二进制 SHA-256 | `5c8525c5329811774cd3a9e66780f26385a3d2ff0bc0164e689937cd042c2593` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| compose / `.env` | 与备份逐字节相同 |
+| 回滚备份 | `new-api.bak-20261117-101824`、`docker-compose.yml.bak-20261117-101824`、`.env.bak-20261117-101824`；定价回滚用上面的 JSON 备份写回 `CreateCacheRatio` |
+| 健康 | `new-api-app` healthy；公开 `/api/status` 在 `10:19:00Z` 返回 200 |
+| 离线回归 | 同一提交 `go test ./relay/channel/openai/... ./service/...` 通过；opus 样例 quota 1283 = $0.002566，与 Wokey 价目表一致。`relay/channel/claude`、`relay/helper` 的失败在基线 `1c6803e3` 上同样存在 |
+| 线上核对 | 部署后到 `10:28Z` 没有任何调用进来，待第一批 Claude 调用后核对 `logs.other` 的 `cache_tokens` / `cache_creation_tokens` 与 Wokey `/v1/requests` 金额 |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
