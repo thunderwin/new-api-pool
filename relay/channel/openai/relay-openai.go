@@ -241,7 +241,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	usageModified := false
-	if simpleResponse.Usage.PromptTokens == 0 {
+	if shouldUseEstimatedUsage(info, &simpleResponse.Usage, responseBody) {
 		completionTokens := simpleResponse.Usage.CompletionTokens
 		if completionTokens == 0 {
 			for _, choice := range simpleResponse.Choices {
@@ -592,6 +592,22 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	return &usageResp.Usage, nil
 }
 
+// shouldUseEstimatedUsage 判断上游没给 prompt_tokens 时是否要用本地估算覆盖用量。
+// type 1（OpenAI 兼容）渠道转发 Claude 时，prompt_tokens 只含非缓存输入（完全命中
+// 缓存时甚至是 0），真实用量在 usage.cache_read_input_tokens /
+// usage.cache_creation_input_tokens 上；这时覆盖会丢掉缓存数据，并把整段 prompt
+// 当成普通输入计费。其它渠道类型维持原逻辑。
+func shouldUseEstimatedUsage(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) bool {
+	if usage == nil || usage.PromptTokens != 0 {
+		return false
+	}
+	if info == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return true
+	}
+	_, hasClaudeCacheUsage := extractClaudeCacheTokensFromBody(responseBody)
+	return !hasClaudeCacheUsage
+}
+
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
 	if info == nil || usage == nil {
 		return
@@ -627,12 +643,68 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 			}
 		}
 	case constant.ChannelTypeOpenAI:
+		if claudeCacheUsage, ok := extractClaudeCacheTokensFromBody(responseBody); ok {
+			// 上游把 Claude 的缓存用量单独放在 usage.cache_read_input_tokens /
+			// usage.cache_creation_input_tokens 里，prompt_tokens 不含缓存。
+			// 必须走 anthropic 语义（不从 prompt_tokens 里减缓存），
+			// 否则 prompt_tokens 很小的时候减完缓存会变成负数。
+			usage.PromptTokensDetails.CachedTokens = claudeCacheUsage.CachedReadTokens
+			usage.PromptTokensDetails.CachedCreationTokens = claudeCacheUsage.CachedCreationTokens
+			// 中转站不会下发 1h 的 cache_control，缓存写全部按 5 分钟计价。
+			usage.ClaudeCacheCreation5mTokens = claudeCacheUsage.CachedCreationTokens
+			usage.UsageSemantic = "anthropic"
+			break
+		}
+		// GPT 系模型的缓存命中在 usage.input_tokens_details.cached_tokens 里，
+		// 且 prompt_tokens 已经包含缓存，只需要把命中数暴露给计费。
+		if usage.PromptTokensDetails.CachedTokens == 0 && usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
+			usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
+		}
 		if usage.PromptTokensDetails.CachedTokens == 0 {
 			if cachedTokens, ok := extractLlamaCachedTokensFromBody(responseBody); ok {
 				usage.PromptTokensDetails.CachedTokens = cachedTokens
 			}
 		}
 	}
+}
+
+// claudeCacheUsage 是 Claude 语义下的缓存读 / 缓存写 token 数。
+type claudeCacheUsage struct {
+	CachedReadTokens     int
+	CachedCreationTokens int
+}
+
+// extractClaudeCacheTokensFromBody 从响应体的 usage.cache_read_input_tokens /
+// usage.cache_creation_input_tokens 提取 Claude 缓存用量。
+// 只要任一字段出现就返回 true（字段值为 0 也算出现）；两个字段都没有时返回 false。
+func extractClaudeCacheTokensFromBody(body []byte) (claudeCacheUsage, bool) {
+	if len(body) == 0 {
+		return claudeCacheUsage{}, false
+	}
+
+	var payload struct {
+		Usage struct {
+			CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return claudeCacheUsage{}, false
+	}
+
+	if payload.Usage.CacheReadInputTokens == nil && payload.Usage.CacheCreationInputTokens == nil {
+		return claudeCacheUsage{}, false
+	}
+
+	result := claudeCacheUsage{}
+	if payload.Usage.CacheReadInputTokens != nil {
+		result.CachedReadTokens = *payload.Usage.CacheReadInputTokens
+	}
+	if payload.Usage.CacheCreationInputTokens != nil {
+		result.CachedCreationTokens = *payload.Usage.CacheCreationInputTokens
+	}
+	return result, true
 }
 
 func extractCachedTokensFromBody(body []byte) (int, bool) {

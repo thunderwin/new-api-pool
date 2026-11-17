@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -438,4 +439,54 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 
 	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 14500, quota)
+}
+
+// Wokey 转发 Claude（type 1 / OpenAI 兼容渠道）时的真实用量：prompt_tokens 只含非缓存
+// 输入，缓存读写单独计。relay/channel/openai 会把这两个缓存字段翻译成 anthropic 语义，
+// 这里校验换成 anthropic 语义后的最终 quota。
+func TestCalculateTextQuotaSummaryWokeyClaudeCacheUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "claude-opus-5-5",
+		PriceData: types.PriceData{
+			ModelRatio:           0.3,
+			CompletionRatio:      5,
+			CacheRatio:           0.05,
+			CacheCreationRatio:   1.25,
+			CacheCreation5mRatio: 1.25,
+			CacheCreation1hRatio: 2,
+			GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+
+	// 一次 opus 调用的上游用量：输入 2、缓存读 35511、5 分钟缓存写 419、输出 395。
+	usage := &dto.Usage{
+		PromptTokens:     2,
+		CompletionTokens: 395,
+		TotalTokens:      397,
+		UsageSemantic:    "anthropic",
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         35511,
+			CachedCreationTokens: 419,
+		},
+		ClaudeCacheCreation5mTokens: 419,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.True(t, summary.IsClaudeUsageSemantic)
+	require.Equal(t, "anthropic", summary.UsageSemantic)
+	// anthropic 语义不从 prompt_tokens 里减缓存：
+	// (2 + 35511*0.05 + 419*1.25 + 395*5) * 0.3 = 1282.89 => 1283
+	require.Equal(t, 2, summary.PromptTokens)
+	require.Equal(t, 35511, summary.CacheTokens)
+	require.Equal(t, 419, summary.CacheCreationTokens5m)
+	require.Equal(t, 1283, summary.Quota)
+	// quota / 500000 = $0.002566
+	require.InDelta(t, 0.002566, float64(summary.Quota)/common.QuotaPerUnit, 1e-6)
 }

@@ -13,6 +13,37 @@
 
 ---
 
+## v0.6.11 — Wokey 上 Claude 缓存读写计费修复（2026-11-17）
+
+> 只改代码和文档。记录时**还没部署**，线上仍是旧逻辑；部署与线上核对结果另记在部署报告里。
+
+| 类型 | 变更 |
+|---|---|
+| `🐛` | type 1（OpenAI 兼容）渠道转发 Claude 时，从 `usage.cache_read_input_tokens` / `usage.cache_creation_input_tokens`（流式取最后一个带 `usage` 的 chunk）解析缓存读 / 缓存写，写入 `prompt_tokens_details.cached_tokens`、`cached_creation_tokens`、`claude_cache_creation_5_m_tokens`，并标记 `usage_semantic=anthropic` |
+| `🐛` | 非流式响应 `prompt_tokens=0` 但带 Claude 缓存字段时，不再用本地估算覆盖上游 `usage`（否则缓存数据全丢，整段 prompt 按输入价计费） |
+| `🐛` | GPT 系模型的缓存命中从 `usage.input_tokens_details.cached_tokens` 复制到 `cached_tokens`，命中部分按缓存读价而不是输入价计费 |
+| `*` | 其它渠道类型（DeepSeek / 智谱 / Moonshot / 原生 Claude 等）的用量解析与计费不变；无表结构变更、无新增依赖 |
+
+**原因**：Wokey 的 Claude 模型 `prompt_tokens` **不含缓存**，缓存读写单独放在
+`usage.cache_read_input_tokens` / `usage.cache_creation_input_tokens`。`dto.Usage` 没有这两个字段，
+type 1 渠道的用量后处理也不读它们，于是生产日志里 `prompt_tokens≈2`、`cache_tokens=0`，
+只有输出 token 被计费。GPT 系模型则相反：`prompt_tokens` 已含缓存，命中数在
+`usage.input_tokens_details.cached_tokens`，之前没复制到 `cached_tokens`，命中部分按输入价收费。
+
+**影响**：Claude 走 type 1 渠道的调用开始按「输入 + 缓存读 + 缓存写（5 分钟）+ 输出」计费；
+GPT 缓存命中的调用按缓存读价计费，总额下降。同一个 opus 样例（输入 2、缓存读 35511、
+5 分钟缓存写 419、输出 395；`model_ratio=0.3`、`completion_ratio=5`、`cache_ratio=0.05`、
+`create_cache_ratio=1.25`）：
+
+- 修复前：(2 + 395×5) × 0.3 = **593** quota ≈ $0.001186（只有输出被计费）
+- 修复后：(2 + 35511×0.05 + 419×1.25 + 395×5) × 0.3 = **1283** quota ≈ $0.002566
+
+Wokey 用量语义核实日期：2026-11-17，见 <https://wokey.ai/docs/chat-completions>。
+Claude 缓存写全部是 5 分钟缓存：中转站不下发 1h 的 `cache_control`，所以
+`claude_cache_creation_1_h_tokens` 保持 0。
+
+---
+
 ## v0.6.10 — 关键词能力返回关键词难度（2026-11-11）
 
 | 类型 | 变更 |
