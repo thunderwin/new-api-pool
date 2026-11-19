@@ -306,6 +306,7 @@ curl https://api.tokwork.com/v1/capabilities \
 | `ssl-analyze-v1` | 异步 | `host`（域名） | 各 endpoint 的 TLS 评级详情 | 免费 |
 | `web-unlock-v1` | 同步 | **必填** `url`；仅限 Wayfair 四个主域名及子域名的 HTTPS 页面 | `status`、`html` | $0.003 / 次 |
 | `web-search-v1` | 同步 | **必填** `query`；可选 `count`（默认 8，最大 20） | `results[]`：`title`、`url`、`snippet`、`summary`、`site_name`、`date` | $0.001 / 次；空结果免费 |
+| `geo-site-audit-v1` | 同步 | **必填** `url`（公开站点）；可选 `pages`（最多 10 个）、`max_pages`（默认 8）、`training_policy` | `summary`、`robots`、`pages[]`、`checks[]`、`notes[]` | 免费 |
 
 搜索与 SEO 能力（15 个经 AISA，按上游实际用量结算）：
 
@@ -634,6 +635,79 @@ curl https://api.tokwork.com/v1/capabilities/backlinks-summary-v1 \
 
 DataForSEO 类能力的 `output.result` 是上游 `tasks[0].result`；Similarweb 类能力
 返回 `output.meta` 和 `output.data`。
+
+**GEO 站点体检示例**（`geo-site-audit-v1`）：
+
+这个能力不调用第三方 API，由网关自己抓取公开网页并做确定性检查，因此在海外服务器上
+测得的「AI 爬虫能否看到页面」比在中国客户端上测更准。单次调用免费。
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/geo-site-audit-v1 \
+  -H "Authorization: Bearer sk-REPLACE_ME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "url": "https://example.com/",
+      "pages": ["https://example.com/blog/post"],
+      "max_pages": 6,
+      "training_policy": "allow"
+    }
+  }'
+```
+
+```json
+{
+  "success": true,
+  "capability": "geo-site-audit-v1",
+  "output": {
+    "site": "example.com",
+    "fetched_at": "2026-11-19T08:00:00Z",
+    "training_policy": "allow",
+    "summary": {
+      "official": { "pass": 12, "warn": 2, "fail": 1, "info": 1 },
+      "research": { "pass": 1, "warn": 0, "fail": 0, "info": 4 },
+      "industry": { "pass": 1, "warn": 1, "fail": 0, "info": 3 }
+    },
+    "robots": { "found": true, "content_signals": [], "sitemaps": ["https://example.com/sitemap.xml"] },
+    "pages": [
+      { "url": "https://example.com/", "status": 200, "words": 820, "title": "Example", "h1_count": 1, "schema_types": ["Organization"] }
+    ],
+    "checks": [
+      {
+        "id": "robots_ai_search_access",
+        "category": "crawl",
+        "source": "official",
+        "scope": "site",
+        "status": "pass",
+        "evidence": "9 AI search/retrieval crawlers allowed on 2 audited paths",
+        "reference": "https://www.rfc-editor.org/rfc/rfc9309"
+      }
+    ],
+    "notes": ["pages are fetched with plain HTTPS GET and no JavaScript execution; script-only content is not evaluated"]
+  },
+  "usage": { "unit": "call", "quantity": 1 },
+  "cost_usd": 0
+}
+```
+
+- `url` 只接受 `https`、443 端口、无 userinfo，不允许 IP 字面量；私网、环回、
+  link-local、CGNAT、IPv6 ULA 等地址在拨号时就会被拒绝，重定向最多 5 跳且只能留在
+  同一注册域内。
+- `pages` 里的页面必须与 `url` 同一注册域，最多 10 个；`max_pages` 是含首页的总数，
+  默认 8，范围 1–15。
+- `training_policy` 取 `allow` / `block` / `any`，默认 `allow`。设置成你的真实政策后，
+  体检会把 robots.txt 里训练类爬虫（GPTBot、ClaudeBot、Google-Extended、
+  Applebot-Extended、CCBot、meta-externalagent）的规则和它对比，不一致时给 `warn`。
+- `checks[].source` 为 `official` 的检查来自搜索/AI 厂商官方文档或标准，**只有这一级
+  进入合规结论**；`research`（如 GEO 论文）和 `industry` 只给建议。
+- `checks[].evidence` 给出具体值（最多 300 字符）；`reference` 是文档链接。
+- `pages[].error` 只在单页抓取失败时出现（`blocked` / `unreachable` / `timeout` /
+  `response_too_large` / `http_<状态码>`）。单个页面失败不会让整次调用失败；
+  只有首页抓不到才返回错误。
+- `ai_ua_reachability` 只用各家公开的 User-Agent 请求首页，**只能测 UA 层**，
+  不能验证基于 IP / 反向 DNS 的 verified-bot 规则。
+- 不执行 JavaScript；`llms.txt` 只报告是否存在，不计分。
+- 单请求 15 秒，整次调用最多 90 秒；单页响应上限 3 MiB。
 
 ### 5.3 异步调用 —— `POST /v1/tasks` + `GET /v1/tasks/{id}`
 

@@ -675,8 +675,8 @@ func TestManifestFileIDsAreUnique(t *testing.T) {
 		}
 		ids[manifest.ID] = path
 	}
-	if len(ids) != 33 {
-		t.Fatalf("expected 33 embedded manifests, got %d", len(ids))
+	if len(ids) != 34 {
+		t.Fatalf("expected 34 embedded manifests, got %d", len(ids))
 	}
 }
 

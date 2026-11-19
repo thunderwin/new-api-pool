@@ -13,6 +13,32 @@
 
 ---
 
+## v0.6.13 — 原生 GEO 站点体检能力（2026-11-19）
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增同步能力 `geo-site-audit-v1`：给公开网站做确定性的 GEO（生成式引擎优化）体检，输出 `site`、`fetched_at`、`training_policy`、`summary`、`robots`、`pages[]`、`checks[]`、`notes[]`；`per_call`、`price_usd=0` |
+| `+` | Manifest 新增可选 `native` 字段：`provider: native` + `native: geo-site-audit` 表示由进程内 Go 处理器执行，不经过 `endpoint` 出站 HTTP；`ExecuteSync` 在通用校验后分发 |
+| `+` | 原生处理器注册点 `capability.RegisterNativeSync`（`Validate` 在预扣费前运行，`Run` 返回完整 `output`）；原生 Manifest 不允许声明 `endpoint` / `auth` / `response` / `submit` / `poll` / `content`，`mode` 必须是 `sync` |
+| `+` | 抓取与检查：robots.txt（RFC 9309 + `Content-Signal:` / `Sitemap:`）、sitemap index（一层、最多 3 个子 sitemap）、8 个 AI UA 与浏览器 UA 的可达性对比、服务端渲染正文、canonical / noindex / nosnippet / max-snippet、JSON-LD（Organization / Product / Article / FAQPage）、title / description / H1 / lang / 图片 alt、文章日期、内部与外部引用、统计/引语/关键词密度 |
+| `+` | 检查结果带 `source` 分级：`official`（厂商官方文档或标准，只这一级进入合规结论）、`research`（如 arXiv 2311.09735）、`industry`（行业经验） |
+| `+` | 网络边界：每次连接（含每一跳重定向）在拨号时校验解析出的 IP，拒绝 loopback / private / link-local / unspecified / multicast / CGNAT(100.64/10) / IPv6 ULA；重定向最多 5 跳、只能 https、必须留在同一注册域；sitemap 跨域 URL 跳过；单请求 15 秒、并发 4、只 GET、不带 cookie、单页 3 MiB |
+| `+` | 离线测试覆盖 robots 解析（分组、最长匹配、Allow 优先、通配、Content-Signal、废弃 token）、训练政策三值、UA 挑战检测、noindex/nosnippet/max-snippet、canonical、SPA 空壳、JSON-LD 解析失败与 FAQ 不可见、sitemap index 与 lastmod 规则、日期检测、统计/引语/外链/堆砌指标、实体一致性，以及私网/环回/IPv6 ULA、DNS 重绑、http 降级重定向、跨域重定向、超过 5 跳、超大响应、超时和计费为 0、日志无正文的端到端路径 |
+| `*` | 能力目录从 33 个增加到 34 个；原有 33 个 HTTP 能力、公共 ID、输入输出和计费均不变 |
+
+**为什么**：ericBot 的「AI 可见性」需要从海外服务器看 AI 爬虫能否真正拿到页面。
+纯 User-Agent 或本地客户端测量会漏掉服务端拒绝、robots 规则和渲染差异。
+
+**边界**：不调用任何第三方 API；不执行 JavaScript；`llms.txt` 只报告是否存在（主流
+AI 搜索当前不读取它）；UA 可达性只能测 User-Agent 层，无法验证基于 IP / 反向 DNS
+的 verified-bot 规则；日志只记录元数据，不记录页面内容。
+
+**发布状态**：本次只在仓库内实现并离线核实（`go test ./capability/... ./controller/...`、
+`go vet ./capability/...`、`go build ./...`），未部署、未改服务器、未改 ericBot。
+线上是否已发布以部署记录为准。
+
+---
+
 ## v0.6.12 — DataForSEO AI Optimization 能力（2026-11-19）
 
 > 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、

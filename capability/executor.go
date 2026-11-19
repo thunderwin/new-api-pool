@@ -184,12 +184,28 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 			}
 		}
 	}
+	if strings.TrimSpace(m.Native) != "" {
+		// Native capabilities have no upstream credentials; their own input
+		// validation replaces validateEnvironment.
+		return validateNativeSyncInput(m, input)
+	}
 	return validateEnvironment(m)
 }
 
 func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempotencyKey string) (*SyncResult, *ExecutionError) {
 	if execErr := ValidateSync(m, input); execErr != nil {
 		return nil, execErr
+	}
+	if strings.TrimSpace(m.Native) != "" {
+		handler, ok := nativeSyncHandler(m.Native)
+		if !ok {
+			return nil, &ExecutionError{
+				Code:       "invalid_manifest",
+				Message:    "native capability handler is not registered",
+				HTTPStatus: http.StatusInternalServerError,
+			}
+		}
+		return handler.Run(ctx, m, input)
 	}
 	spec := httpSpec{
 		endpoint:    m.Endpoint,

@@ -19,10 +19,13 @@ const (
 )
 
 type Manifest struct {
-	ID          string           `json:"id"`
-	Provider    string           `json:"provider"`
-	Mode        string           `json:"mode"`
-	Description string           `json:"description"`
+	ID          string `json:"id"`
+	Provider    string `json:"provider"`
+	Mode        string `json:"mode"`
+	Description string `json:"description"`
+	// Native binds a sync capability to an in-process Go handler instead of an
+	// outbound HTTP endpoint (see NativeSyncSpec).
+	Native      string           `json:"native,omitempty"`
 	Endpoint    string           `json:"endpoint,omitempty"`
 	Method      string           `json:"method,omitempty"`
 	Auth        *AuthSpec        `json:"auth,omitempty"`
@@ -163,6 +166,7 @@ type IdempotencySpec struct {
 }
 
 var manifestIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+$`)
+var nativeNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 var headerFieldNamePattern = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 var capabilityEnvPattern = regexp.MustCompile(`^CAPABILITY_[A-Z0-9_]+$`)
 
@@ -230,12 +234,20 @@ func (m *Manifest) Validate() error {
 	if _, err := m.Timeout(); err != nil {
 		return fmt.Errorf("manifest %s: %w", m.ID, err)
 	}
-	if m.Mode == ModeSync {
-		if strings.TrimSpace(m.Endpoint) == "" {
-			return fmt.Errorf("manifest %s: sync endpoint is required", m.ID)
+	nativeName := strings.TrimSpace(m.Native)
+	if nativeName != "" {
+		if err := m.validateNative(nativeName); err != nil {
+			return err
 		}
-		if m.Response == nil || (len(m.Response.Output) == 0 && len(m.Response.Collections) == 0) {
-			return fmt.Errorf("manifest %s: sync response.output or response.collections is required", m.ID)
+	}
+	if m.Mode == ModeSync {
+		if nativeName == "" {
+			if strings.TrimSpace(m.Endpoint) == "" {
+				return fmt.Errorf("manifest %s: sync endpoint is required", m.ID)
+			}
+			if m.Response == nil || (len(m.Response.Output) == 0 && len(m.Response.Collections) == 0) {
+				return fmt.Errorf("manifest %s: sync response.output or response.collections is required", m.ID)
+			}
 		}
 		if m.Request != nil {
 			for _, field := range m.Request.Required {
@@ -320,7 +332,7 @@ func (m *Manifest) Validate() error {
 				}
 			}
 		}
-		if m.Response.Success != nil {
+		if m.Response != nil && m.Response.Success != nil {
 			success := m.Response.Success
 			if strings.TrimSpace(success.Path) == "" && strings.TrimSpace(success.NonEmpty) == "" {
 				return fmt.Errorf("manifest %s: response.success requires path or non_empty", m.ID)
@@ -332,45 +344,47 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("manifest %s: response.success.empty_ok requires non_empty", m.ID)
 			}
 		}
-		for key, spec := range m.Response.Collections {
-			if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" ||
-				(len(spec.Fields) == 0 && len(spec.FieldPaths) == 0) {
-				return fmt.Errorf("manifest %s: response.collections.%s requires path and fields or field_paths", m.ID, key)
-			}
-			if len(spec.Fields) > 0 && len(spec.FieldPaths) > 0 {
-				return fmt.Errorf("manifest %s: response.collections.%s fields and field_paths are mutually exclusive", m.ID, key)
-			}
-			if _, exists := m.Response.Output[key]; exists {
-				return fmt.Errorf("manifest %s: response output key %s is declared twice", m.ID, key)
-			}
-			seen := map[string]struct{}{}
-			for _, field := range spec.Fields {
-				if strings.TrimSpace(field) == "" {
-					return fmt.Errorf("manifest %s: response.collections.%s contains an empty field", m.ID, key)
+		if m.Response != nil {
+			for key, spec := range m.Response.Collections {
+				if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" ||
+					(len(spec.Fields) == 0 && len(spec.FieldPaths) == 0) {
+					return fmt.Errorf("manifest %s: response.collections.%s requires path and fields or field_paths", m.ID, key)
 				}
-				if _, exists := seen[field]; exists {
-					return fmt.Errorf("manifest %s: response.collections.%s contains duplicate field %s", m.ID, key, field)
+				if len(spec.Fields) > 0 && len(spec.FieldPaths) > 0 {
+					return fmt.Errorf("manifest %s: response.collections.%s fields and field_paths are mutually exclusive", m.ID, key)
 				}
-				seen[field] = struct{}{}
-			}
-			for field, path := range spec.FieldPaths {
-				if strings.TrimSpace(field) == "" || strings.TrimSpace(path) == "" {
-					return fmt.Errorf("manifest %s: response.collections.%s contains an empty field_paths entry", m.ID, key)
+				if _, exists := m.Response.Output[key]; exists {
+					return fmt.Errorf("manifest %s: response output key %s is declared twice", m.ID, key)
+				}
+				seen := map[string]struct{}{}
+				for _, field := range spec.Fields {
+					if strings.TrimSpace(field) == "" {
+						return fmt.Errorf("manifest %s: response.collections.%s contains an empty field", m.ID, key)
+					}
+					if _, exists := seen[field]; exists {
+						return fmt.Errorf("manifest %s: response.collections.%s contains duplicate field %s", m.ID, key, field)
+					}
+					seen[field] = struct{}{}
+				}
+				for field, path := range spec.FieldPaths {
+					if strings.TrimSpace(field) == "" || strings.TrimSpace(path) == "" {
+						return fmt.Errorf("manifest %s: response.collections.%s contains an empty field_paths entry", m.ID, key)
+					}
 				}
 			}
-		}
-		for key, mapping := range m.Response.ErrorMap {
-			if strings.TrimSpace(key) == "" {
-				return fmt.Errorf("manifest %s: response.error_map contains an empty key", m.ID)
-			}
-			if strings.TrimSpace(mapping.Code) == "" {
-				return fmt.Errorf("manifest %s: response.error_map.%s.code is required", m.ID, key)
-			}
-			if mapping.HTTPStatus < http.StatusBadRequest || mapping.HTTPStatus > 599 {
-				return fmt.Errorf("manifest %s: response.error_map.%s.http_status must be 4xx or 5xx", m.ID, key)
-			}
-			if strings.TrimSpace(mapping.Message) == "" {
-				return fmt.Errorf("manifest %s: response.error_map.%s.message is required", m.ID, key)
+			for key, mapping := range m.Response.ErrorMap {
+				if strings.TrimSpace(key) == "" {
+					return fmt.Errorf("manifest %s: response.error_map contains an empty key", m.ID)
+				}
+				if strings.TrimSpace(mapping.Code) == "" {
+					return fmt.Errorf("manifest %s: response.error_map.%s.code is required", m.ID, key)
+				}
+				if mapping.HTTPStatus < http.StatusBadRequest || mapping.HTTPStatus > 599 {
+					return fmt.Errorf("manifest %s: response.error_map.%s.http_status must be 4xx or 5xx", m.ID, key)
+				}
+				if strings.TrimSpace(mapping.Message) == "" {
+					return fmt.Errorf("manifest %s: response.error_map.%s.message is required", m.ID, key)
+				}
 			}
 		}
 	} else {
@@ -381,6 +395,29 @@ func (m *Manifest) Validate() error {
 			m.Poll.StatusPath == "" || m.Poll.ResultPath == "" {
 			return fmt.Errorf("manifest %s: async poll.endpoint, status_path and result_path are required", m.ID)
 		}
+	}
+	return nil
+}
+
+// validateNative keeps native capabilities on the sync surface and rejects
+// fields that only make sense for outbound HTTP manifests, so a native
+// Manifest cannot silently ignore an endpoint, credential or field mapping.
+func (m *Manifest) validateNative(name string) error {
+	if m.Mode != ModeSync {
+		return fmt.Errorf("manifest %s: native capabilities must be sync", m.ID)
+	}
+	if !nativeNamePattern.MatchString(name) {
+		return fmt.Errorf("manifest %s: native must be lowercase kebab-case", m.ID)
+	}
+	if strings.TrimSpace(m.Provider) == "" {
+		return fmt.Errorf("manifest %s: native capabilities declare provider native", m.ID)
+	}
+	if strings.TrimSpace(m.Endpoint) != "" || m.Auth != nil || m.Response != nil ||
+		m.Submit != nil || m.Poll != nil || m.Content != nil {
+		return fmt.Errorf("manifest %s: native capabilities must not declare endpoint, auth, response, submit, poll or content", m.ID)
+	}
+	if _, ok := nativeSyncHandler(name); !ok {
+		return fmt.Errorf("manifest %s: native handler %s is not registered", m.ID, name)
 	}
 	return nil
 }

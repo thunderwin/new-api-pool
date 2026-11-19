@@ -1,4 +1,4 @@
-# 第三方 Capability API（2026-11-06 更新）
+# 第三方 Capability API（2026-11-19 更新）
 
 > 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
@@ -33,10 +33,16 @@
 > **2026-11-19 追加（已实现并离线核实，线上发布以部署记录为准）**：新增 11 个
 > DataForSEO「AI Optimization」直连能力（`ai-answer-*` 四个引擎问答、
 > `ai-answer-scrape-*` 两个网页版抓取、`serp-google-ai-mode-v1`、三个
-> `llm-mentions-*`、`ai-keyword-volume-v1`），全部只写 Manifest，没有新增原生能力；
+> `llm-mentions-*`、`ai-keyword-volume-v1`），全部只写 Manifest；
 > `serp-google-v1` 只做加法，新增可选输入 `load_async_ai_overview`；通用 Manifest
 > 新增 `request.enums` 枚举约束。验收命令
 > `go test ./capability/... ./controller/...` 与 `go build ./...` 均通过。
+>
+> 2026-11-19 追加（已实现并离线核实）：新增第一个**原生能力** `geo-site-audit-v1`。
+> 它不调用任何第三方 API，由中转站用自己的 Go 代码抓取公开网页并做确定性 GEO 判断；
+> Manifest 用 `provider: native` + `native: geo-site-audit` 指向进程内处理器，
+> 计费、消费日志、错误 envelope 和 registry（kill switch）仍走统一路径，
+> 不新增 controller 或路由。线上发布状态以部署记录为准。
 
 ## 路由
 
@@ -199,6 +205,7 @@ GET /v1/tasks/task_...
 | `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
 | `web-search-v1` | DeepSeek Search | 同步 | $0.001 / 次 | 网页搜索；空结果成功且免费 |
+| `geo-site-audit-v1` | native（中转站自己抓取） | 同步 | $0 / 次 | 公开网站 GEO（生成式引擎优化）合规体检 |
 
 Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 
@@ -450,6 +457,113 @@ reserve 在这些实测值上取整并留余量（0.20 / 0.10 / 0.01 / 0.25 / 0.
 DeepSeek 官方当前写的是每 1,000 次成功 Search 收 **$0.75**（约 ¥5），
 账户级 Search 限速 100 QPS；只有 HTTP 200 且 `results` 非空才收费。
 维护者 2026-11-04 实测服务器到 DeepSeek TTFB 约 0.3 秒，单次搜索 260–600ms。
+
+### `geo-site-audit-v1`（原生能力，2026-11-19）
+
+第一个不调用第三方 API 的 Capability：中转站用自己的 Go 代码抓取公开网页，按固定规则表
+做确定性 GEO 判断。它运行在海外服务器上，因此「AI 爬虫视角的可达性」比在中国客户端上测更准。
+
+Manifest 写 `provider: native` + `native: geo-site-audit`，`mode: sync`，不声明
+`endpoint` / `auth` / `response` / `submit` / `poll` / `content`。`ExecuteSync` 在通用
+Manifest 校验之后按 `native` 字段分发到进程内处理器；预扣/结算、消费日志、错误 envelope、
+幂等键和 registry（kill switch）全部复用统一路径。
+
+输入：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `url` | 是 | 公开网站 URL。只接受 `https`、443 端口、无 userinfo，不允许 IP 字面量 |
+| `pages` | 否 | 同站点额外页面 URL 数组，最多 10 个；跨注册域返回 `400 invalid_request` |
+| `max_pages` | 否 | 抓取页面总数（含首页），默认 8，范围 1–15 的整数 |
+| `training_policy` | 否 | `allow` / `block` / `any`，默认 `allow`，表示客户对训练类爬虫的既定政策 |
+
+输出：
+
+| 字段 | 说明 |
+|---|---|
+| `site` | 输入站点的注册域（eTLD+1） |
+| `fetched_at` | 本次抓取时间（RFC 3339） |
+| `training_policy` | 回显输入 |
+| `summary` | `official` / `research` / `industry` 三组各自的 `pass` / `warn` / `fail` / `info` 计数 |
+| `robots` | `found`；`content_signals[]`（robots.txt 里 `Content-Signal:` 的原始值）；`sitemaps[]`（`Sitemap:` 声明的 URL） |
+| `pages[]` | `url`、`status`、`words`、`title`、`h1_count`、`schema_types[]`；抓取失败的页面也会出现并带 `error` |
+| `checks[]` | `id`、`category`、`source`、`scope`、`status`、`evidence`（≤300 字符）、`reference`；页面级检查额外带 `url` |
+| `notes[]` | 方法说明与跳过原因（不抓 JS、仅 UA 层、跨注册域 sitemap 跳过等） |
+
+来源分级（`checks[].source`）：
+
+- `official`：搜索/AI 厂商官方文档、标准或 Google 结构化数据文档。**只有这一级进入合规结论。**
+- `research`：公开研究，例如 GEO 论文 <https://arxiv.org/abs/2311.09735>。只给建议。
+- `industry`：行业经验（答案先行、`llms.txt`、实体一致性）。只给建议。
+
+检查项（`status` 为 `pass` / `warn` / `fail` / `info`）：
+
+| 检查 ID | 类别 | 来源 | 说明 |
+|---|---|---|---|
+| `robots_ai_search_access` | crawl | official | 9 个 AI 搜索/检索爬虫（OAI-SearchBot、ChatGPT-User、PerplexityBot、Perplexity-User、Claude-SearchBot、Claude-User、Googlebot、Bingbot、Applebot）在首页和每个被测路径是否被 robots.txt 放行；被禁 `fail` |
+| `robots_training_policy` | crawl | official | GPTBot、ClaudeBot、Google-Extended、Applebot-Extended、CCBot、meta-externalagent 与 `training_policy` 是否一致；不一致 `warn`，`any` 为 `info` |
+| `robots_deprecated_tokens` | crawl | official | 出现已废弃的 `anthropic-ai` / `Claude-Web` token → `warn`（无效规则） |
+| `ai_ua_reachability` | crawl | official | 8 个 AI UA 与浏览器 UA 各 GET 首页一次；浏览器 200 而 AI UA 被拒/挑战 → `fail`。只代表 User-Agent 层 |
+| `sitemap_discovery` | crawl | official | robots `Sitemap:` 或 `/sitemap.xml`；不存在 → `warn`；lastmod 覆盖率写入证据；所有 lastmod 完全相同或最新 >180 天 → `warn` |
+| `llms_txt` | crawl | industry | `/llms.txt` 是否存在；始终 `info`，并注明主流 AI 搜索不读取它 |
+| `entity_consistency` | entity | industry | 各页 Organization/LocalBusiness 的 name、telephone、address 是否一致 |
+| `page_http_status` | crawl | official | 页面 HTTP 非 200 或抓取失败 → `fail` |
+| `page_indexability` | index | official | meta robots 或 X-Robots-Tag（含针对 googlebot/bingbot 的）里的 `noindex` → `fail` |
+| `page_snippet_controls` | index | official | `nosnippet`、`max-snippet` 小于 50（含 0）→ `warn`；`data-nosnippet` 数量 → `info` |
+| `page_canonical` | index | official | canonical 缺失 → `warn`；指向其它 URL → `info` 并写明目标 |
+| `page_server_rendered_text` | render | official | 去掉 script/style/noscript 后的可见词数；<150 → `warn`；几乎为空且有 SPA 挂载点 → `fail` |
+| `page_jsonld_parse` | schema | official | JSON-LD 解析失败 → `fail`；没有 JSON-LD → `info` |
+| `page_jsonld_organization` | schema | official | Organization/LocalBusiness 缺 `name`/`url`/`logo`/`sameAs` → `warn` |
+| `page_jsonld_product` | schema | official | Product 缺 `offers` → `warn`；Product `name` 不在可见正文 → `fail` |
+| `page_jsonld_article` | schema | official | Article/BlogPosting/NewsArticle 缺 `datePublished`/`dateModified`/`author` → `warn` |
+| `page_jsonld_faq` | schema | official | FAQPage 问题文本不在可见正文 → `fail`（Google 要求结构化数据与可见内容一致） |
+| `page_title` | structure | official | title 缺失，或与其它被测页面重复 → `warn` |
+| `page_meta_description` | structure | official | meta description 缺失 → `warn` |
+| `page_h1` | structure | official | H1 不是恰好 1 个 → `warn` |
+| `page_lang` | structure | official | `<html lang>` 缺失 → `warn` |
+| `page_image_alt` | structure | official | 图片 alt 覆盖率 < 80% → `warn` |
+| `page_article_date` | freshness | official | 文章类页面（Article/BlogPosting/NewsArticle，或路径含 `/blog/`、`/news/`、`/posts/`）没有可见日期 → `warn` |
+| `answer_first_paragraph` | citability | industry | H1 后第一段 40–120 词 → `pass`，否则 `warn` |
+| `content_lists_tables` | citability | industry | 列表与表格数量，`info` |
+| `stats_density` | citability | research | 每千词中含 `%` 或带单位数字的个数，`info` |
+| `quotes_in_content` | citability | research | blockquote 或长引语数量，`info` |
+| `external_citations` | citability | research | 指向外部站点的链接数，`info` |
+| `keyword_stuffing` | citability | research | 单个非停用词占比 > 4% → `warn` |
+
+抓取流程与限制：
+
+- `/robots.txt` 按 RFC 9309 解析：分组、最长匹配、Allow 优先；同时读取 Cloudflare 风格的
+  `Content-Signal:` 行和 `Sitemap:` 行。
+- 首页 → sitemap（robots 声明的优先，否则 `/sitemap.xml`；sitemap index 只展开一层，
+  最多 3 个子 sitemap）→ 从 sitemap 按路径前缀分散挑页面，加上输入 `pages`，
+  总数不超过 `max_pages`。
+- 单请求超时 15 秒；整体受 Manifest `90s` 约束；并发上限 4；只发 GET；不带 cookie；
+  默认 UA `Mozilla/5.0 (compatible; GEO-Audit/1.0)`。
+- 单页响应上限 3 MiB；Manifest `max_response_bytes` 为 8 MiB。
+- 不执行 JavaScript，不做 JS 渲染；`llms.txt` 只探测存在性，不计分。
+- 日志只记录 capability、状态、耗时等元数据，不记录页面内容。
+
+安全边界：
+
+- 每次连接（包括每一跳重定向）都在拨号时校验解析出的 IP：拒绝 loopback / private /
+  link-local / unspecified / multicast / CGNAT（100.64.0.0/10）/ IPv6 ULA，防 DNS rebinding。
+- 重定向最多 5 跳、只能跳 `https`；所有抓取的 URL 必须与输入站点同一注册域
+  （apex 及其子域）；sitemap 里跨注册域的 URL 跳过。
+- 抓取失败只影响对应页面；只有首页抓不到才让整次调用失败。
+
+错误码：
+
+| 错误码 | HTTP | 场景 |
+|---|---|---|
+| `invalid_request` | 400 | `url` / `pages` / `max_pages` / `training_policy` 不合法，预扣费之前返回 |
+| `site_not_allowed` | 400 | 站点解析到非公网地址、重定向到 http 或跨注册域、超过 5 跳 |
+| `site_unreachable` | 502 | 首页 DNS / 连接 / TLS 失败 |
+| `site_timeout` | 504 | 首页在总截止时间内没有响应 |
+| `site_response_too_large` | 502 | 首页超过单页 3 MiB 上限 |
+
+单个页面抓取失败时整次调用仍然成功，失败页面出现在 `pages[]` 并带 `error`
+（`blocked` / `unreachable` / `timeout` / `response_too_large` / `http_<状态码>`），
+对应 `page_http_status` 为 `fail`。
 
 ## 计费
 

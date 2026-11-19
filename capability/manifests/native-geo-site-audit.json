@@ -1,0 +1,31 @@
+{
+  "id": "geo-site-audit-v1",
+  "provider": "native",
+  "native": "geo-site-audit",
+  "mode": "sync",
+  "description": "Deterministic GEO (generative engine optimization) audit of a public site: robots rules for AI crawlers, server-rendered content, structured data, sitemap freshness and citation readiness, measured from the gateway's own network. Free.",
+  "request": {
+    "required": ["url"],
+    "ranges": {
+      "max_pages": {"min": 1, "max": 15, "integer": true}
+    },
+    "array_lengths": {
+      "pages": {"max": 10}
+    },
+    "defaults": {
+      "max_pages": 8
+    }
+  },
+  "billing": {
+    "type": "per_call",
+    "price_usd": 0
+  },
+  "limits": {
+    "timeout": "90s",
+    "max_response_bytes": 8388608
+  },
+  "retry": {
+    "attempts": 1,
+    "retry_on": []
+  }
+}

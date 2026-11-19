@@ -52,8 +52,9 @@
   （0–100，取自上游 `keyword_properties`，不额外计费），其余字段不变。
   三个能力的单次 reserve 分别为 $0.04 / $0.04 / $0.21。是否已经发布到线上只能以
   当次运维报告和部署记录为准；仓库代码改动本身不代表已上线。
-- 2026-11-19 已核实：Capability 层共有 **33 个能力**，其中 15 个经 AISA、**14 个直连
-  DataForSEO**、4 个其它供应商（Open-Meteo、SSL Labs、Bright Data、DeepSeek）。
+- 2026-11-19 已核实：Capability 层共有 **34 个能力**，其中 33 个走第三方 HTTP API
+  （15 个经 AISA、**14 个直连 DataForSEO**、4 个其它供应商：Open-Meteo、SSL Labs、
+  Bright Data、DeepSeek），另有 1 个**原生能力** `geo-site-audit-v1`。
   本日新增 11 个 DataForSEO「AI Optimization」直连能力（同属 `dataforseo` provider、
   HTTP Basic 鉴权、单元素数组 body、`$.cost` 按成本价结算）：
   `ai-answer-chatgpt-v1`、`ai-answer-claude-v1`、`ai-answer-gemini-v1`、
@@ -61,8 +62,10 @@
   `serp-google-ai-mode-v1`、`llm-mentions-search-v1`、`llm-mentions-top-domains-v1`、
   `llm-mentions-top-pages-v1`、`ai-keyword-volume-v1`；`serp-google-v1` 只做加法，
   新增可选输入 `load_async_ai_overview`（不传时不发送该字段，上游默认 `false`）。
-  这 11 个能力**已实现并离线核实**（`go test ./capability/... ./controller/...`），
-  线上是否已发布同样以部署记录为准。
+  原生能力 `geo-site-audit-v1` 由中转站自己的 Go 代码抓取公开网页并做确定性 GEO 判断，
+  不调用任何第三方 API，`per_call` 且 `price_usd=0`（见 R13）。
+  这 12 个能力**已实现并离线核实**（`go test ./capability/... ./controller/...`），
+  线上是否已发布以部署记录为准。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -285,6 +288,43 @@ latency_ms, usage_unit, usage_quantity, cost_usd, error_code
 
 没有 shadow 数据和计费核对，不允许全量。
 
+### R13. 原生能力（Native Capability）
+
+**是什么**：Manifest 里写 `"provider": "native"` + `"native": "<handler>"`，
+`ExecuteSync` 在通用校验之后把调用分发到进程内的 Go 处理器，不经过 Manifest 声明的
+供应商 `endpoint`（处理器自己做受控的公开网页抓取）。
+目前唯一实现是 `geo-site-audit-v1`（`capability/native_geo_*.go`）。
+
+**什么时候允许**（以下全部满足）：
+
+1. 不调用任何第三方付费 API，也不转售第三方数据；
+2. 只做公开网页抓取和确定性计算：同样的输入与网络状态得到同样的判断，不含模型推理；
+3. 不执行用户提交的代码，不做任意路径的反向代理，不访问非公网地址；
+4. 如果需要第三方数据，先走 R1 的 Manifest 能力，不在原生处理器里另写供应商适配。
+
+**仍然受全部通用约束**：
+
+- Manifest 校验（`Validate`）、`request.required` / `ranges` / `array_lengths`、
+  预扣与结算、消费日志、错误 envelope、幂等键、registry（kill switch）与 R7/R8/R9 不变；
+- 原生 Manifest **不允许**声明 `endpoint`、`auth`、`response`、`submit`、`poll`、`content`，
+  `mode` 必须是 `sync`；声明了会在加载时校验失败；
+- 计费仍只来自 Manifest。免费试点写 `billing.type=per_call` + `price_usd: 0`，
+  与 `weather-v1` 一样不会阻塞零余额用户；
+- kill switch 仍是 registry：从 `capability/manifests/` 移除或改名、或运行时
+  `Unregister`，不新增旁路开关；
+- 日志不记录抓取到的页面内容，只记录 capability / 状态 / 耗时 / usage 等元数据。
+
+**网络与安全**（R8 在原生能力上的具体化）：
+
+- 输入只允许 `https`、443 端口、无 userinfo、无 IP 字面量；
+- 每一次连接（包括每一跳重定向）都在**拨号时**校验解析出的 IP，拒绝 loopback /
+  private / link-local / unspecified / multicast / CGNAT（100.64.0.0/10）/ IPv6 ULA，
+  并直接拨号到校验过的 IP 字面量，防 DNS rebinding；
+- 重定向最多 5 跳且只能 `https`；所有抓取的 URL 必须与输入站点同一注册域
+  （apex 及其子域）；跨注册域 URL 跳过；
+- 单请求超时、整体 timeout、最大响应体、并发上限都来自 Manifest 或代码常量，并在
+  R8 的范围内；只发 GET，不带 cookie。
+
 ---
 
 ## 4. 目标架构（原生方案，Phase 0/1 已实现）
@@ -334,6 +374,8 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 | Manifest / JSON path / validation | `capability/manifest.go` |
 | 嵌入式 Registry | `capability/registry.go` |
 | 同步 / 异步 HTTP 执行器 | `capability/executor.go` |
+| 原生（进程内）能力注册与分发 | `capability/native.go` |
+| 原生 GEO 体检实现 | `capability/native_geo_*.go` |
 | Controller / billing / logging | `controller/capability.go` |
 | 任务幂等表 | `model/capability_idempotency.go` |
 | 路由 | `router/capability-router.go` |
@@ -368,6 +410,17 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 - `response.success.empty_ok`：配合 `success.non_empty`，把空数组、空对象、空字符串或缺失值
   视为成功；结算为 0 并退回预扣费。未声明该字段的 Manifest 保持原有空正文失败语义。
 - 已接入 `web-search-v1`（DeepSeek Search，同步 `per_call`，空结果免费）。
+
+2026-11-19 新增的原生能力机制：
+
+- Manifest 新增可选字段 `native`。非空时表示该能力由进程内 Go 处理器执行，
+  `provider` 按约定写 `native`；`mode` 必须是 `sync`。
+- `capability.RegisterNativeSync(name, NativeSyncSpec{Validate, Run})` 注册处理器，
+  `ExecuteSync` 在通用校验后分发；`Validate` 在预扣费之前运行，`Run` 返回完整 `output`。
+- 原生 Manifest 不允许声明 `endpoint`、`auth`、`response`、`submit`、`poll`、`content`；
+  未注册的 `native` 名称在 Manifest 加载时即校验失败。
+- 首个实现 `geo-site-audit-v1`（`per_call`、$0、90s、单页 3 MiB）只抓公开网页并做
+  确定性检查，不调用第三方 API；规则见 R13。
 
 2026-11-05 新增的 Manifest 通用能力：
 
@@ -551,10 +604,11 @@ limits:
 
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
 > （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、14 个
-> DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）和
-> `web-search-v1`（DeepSeek Search，同步）已接入，编码后共 33 个能力。
-> `weather-v1` 与 `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
-> DataForSEO 直连能力按响应正文 `cost` 结算；
+> DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）、
+> `web-search-v1`（DeepSeek Search，同步）和 `geo-site-audit-v1`（原生 GEO 体检，同步）
+> 已接入，编码后共 34 个能力。
+> `weather-v1`、`ssl-analyze-v1` 与 `geo-site-audit-v1` 是免费试点；AISA 按上游
+> 实际成本结算；DataForSEO 直连能力按响应正文 `cost` 结算；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
 > 11 个 AI Optimization 能力已实现并在离线测试中核实（2026-11-19），
 > 线上发布状态以部署记录为准。
