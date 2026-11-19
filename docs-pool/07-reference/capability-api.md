@@ -44,10 +44,11 @@
 > 计费、消费日志、错误 envelope 和 registry（kill switch）仍走统一路径，
 > 不新增 controller 或路由。线上发布状态以部署记录为准。
 >
-> 2026-11-19 追加（已实现并离线核实，**待部署**）：新增 3 个**本站模型联网问答**能力
+> 2026-11-19 追加（已实现并离线核实，**待部署**）：新增 3 个**本站模型问答**能力
 > `ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`。它们
 > `provider: relay`，经本站公开 API 域名 `https://api.tokwork.com/v1/responses`
-> 调用自家 OpenAI 兼容接口（模型常量 + `tools: [{"type":"web_search"}]`），
+> 调用自家 OpenAI 兼容接口：grok 与 kimi 带 `tools: [{"type":"web_search"}]` 联网，
+> 豆包不带工具、固定 `reasoning: {"effort": "minimal"}`，是模型记忆问答；
 > 凭证是运维账号的 API token，只写在服务端变量 `CAPABILITY_RELAY_SELF_KEY`。
 > 通用 Manifest 同时新增 `response.optional_output`。线上发布状态以部署记录为准。
 
@@ -214,9 +215,9 @@ GET /v1/tasks/task_...
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
 | `web-search-v1` | DeepSeek Search | 同步 | $0.001 / 次 | 网页搜索；空结果成功且免费 |
 | `geo-site-audit-v1` | native（中转站自己抓取） | 同步 | $0 / 次 | 公开网站 GEO（生成式引擎优化）合规体检 |
-| `ai-answer-grok-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.00000025，max $0.06 | grok-4.7 联网问答，答案带 `url_citation` 引用 |
+| `ai-answer-grok-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.00000025，max $0.10 | grok-4.7 联网问答，答案带 `url_citation` 引用 |
 | `ai-answer-kimi-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.0000008，max $0.03 | kimi-k3 联网问答，来源 URL 写在正文里 |
-| `ai-answer-doubao-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.0000005，max $0.03 | doubao-seed-2.1-pro 问答，模型自己决定是否联网 |
+| `ai-answer-doubao-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.0000005，max $0.03 | doubao-seed-2.1-pro **不联网的模型记忆问答**，反映模型自身知识，不返回引用 |
 
 Manifest 在 `capability/manifests/`，编译时嵌入二进制。
 
@@ -469,19 +470,24 @@ DeepSeek 官方当前写的是每 1,000 次成功 Search 收 **$0.75**（约 ¥5
 账户级 Search 限速 100 QPS；只有 HTTP 200 且 `results` 非空才收费。
 维护者 2026-11-04 实测服务器到 DeepSeek TTFB 约 0.3 秒，单次搜索 260–600ms。
 
-### 本站模型联网问答（`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，2026-11-19）
+### 本站模型问答（`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，2026-11-19）
 
 用途：AI 可见性要查一个买家问题在各家 AI 回答里有没有提到客户品牌。DataForSEO 已覆盖
 ChatGPT / Claude / Gemini / Perplexity；这三个能力补上中转站自己的 Grok / Kimi / 豆包。
-实测手段：经本站 OpenAI 兼容 `POST /v1/responses`，`tools: [{"type":"web_search"}]`。
+实测手段：经本站 OpenAI 兼容 `POST /v1/responses`。grok 与 kimi 带
+`tools: [{"type":"web_search"}]` 联网；豆包**不带工具**、固定
+`reasoning: {"effort": "minimal"}`，是模型记忆（训练数据）问答。
 
 | 能力 | 模型常量 | 单次实测 | 每 token 单价 | reserve |
 |---|---|---|---|---|
-| `ai-answer-grok-v1` | `grok-4.7` | 36–73 秒，约 6 万 token，$0.013–0.019 | $0.00000025 | $0.06 |
+| `ai-answer-grok-v1` | `grok-4.7` | 联网 36–188 秒，约 6 万–19 万 token，$0.013–0.047 | $0.00000025 | $0.10 |
 | `ai-answer-kimi-v1` | `kimi-k3` | 20–33 秒，约 1 万 token，约 $0.0075 | $0.0000008 | $0.03 |
-| `ai-answer-doubao-v1` | `doubao-seed-2.1-pro` | 18–50 秒，约 $0.003 | $0.0000005 | $0.03 |
+| `ai-answer-doubao-v1` | `doubao-seed-2.1-pro` | 记忆问答约 30 秒，$0.003 量级 | $0.0000005 | $0.03 |
 
-（实测日期 2026-11-19，使用运营方账号；豆包只在模型认为需要时联网，品牌推荐类问题常常不搜。）
+（实测日期 2026-11-19，使用运营方账号。豆包早期带 `web_search` 的实测：默认推理 86–135 秒
+会超过 115 秒超时、基本不产生 `url_citation`；`effort=low` 会把工具调用当文本吐出；
+`effort=minimal` 约 30 秒完成但不联网。因此改为不联网的记忆问答。
+grok 一次实测 188897 token（$0.047），reserve 由 `$0.06` 上调到 `$0.10`。）
 
 - 入口：`POST https://api.tokwork.com/v1/responses`。这是本站自己的公开 API 域名，
   仍走现有出站 SSRF 防护（只允许 HTTPS、拒绝私网/loopback），
@@ -489,19 +495,22 @@ ChatGPT / Claude / Gemini / Perplexity；这三个能力补上中转站自己的
 - 鉴权：Bearer，服务端变量 `CAPABILITY_RELAY_SELF_KEY`（一个本站运维账号的 API token）。
   缺失时在预扣费前返回 `500 credential_error`，不调用上游、不扣费。
   调用方不能通过输入覆盖凭证；值由运维用 `set-capability-secret.sh` 单独设置。
-- 请求体：`model` 和 `tools: [{"type":"web_search"}]` 是 Manifest 常量；
+- 请求体：`model` 是 Manifest 常量；grok 与 kimi 另外固定
+  `tools: [{"type":"web_search"}]`，豆包固定 `reasoning: {"effort":"minimal"}` 且不带工具；
   `input` = 必填 `prompt`；`instructions` = 可选 `system_message`（不传就不发送）；
   `max_output_tokens` 默认 1500，范围 200–4000 的整数（不传就发默认值）。
 - 成功判定：`$.status` 为 `completed` 或 `incomplete`。`failed` 映射为
   `503 upstream_unavailable`；其他未识别的状态返回 `502 upstream_response_failed`。
-- 输出：`result` = 整个 `$.output` 数组（`message` 分段、`web_search_call`、
-  `url_citation` 注释都在里面），`output_text`、`usage`、`model` 是便捷字段，
+- 输出：`result` = 整个 `$.output` 数组（`message` 分段、联网能力的 `web_search_call`、
+  `url_citation` 注释都在里面；豆包是记忆问答，数组里只有 `message`），
+  `output_text`、`usage`、`model` 是便捷字段，
   用 `response.optional_output` 声明：路径不存在时输出 `null`，不影响成功。
   中转站非流式透传上游正文，所以 `output_text` 是否存在取决于具体上游通道。
 - 三个模型的语义差异（写在各 Manifest 的 `description` 里）：
   - Grok：稳定联网，`output` 里既有 `web_search_call` 也有 message 的 `url_citation` 注释。
   - Kimi：会联网（有 `web_search_call`），但没有 `url_citation` 注释，**来源 URL 写在正文里**。
-  - 豆包：模型自己决定是否联网；搜了才有 `url_citation`，`tool_choice: "required"` 不生效。
+  - 豆包：**不联网**，请求不发送 `tools`，固定 `reasoning.effort=minimal`；
+    答案只反映模型训练数据里的品牌认知，`output` 里没有 `web_search_call`，也不会有引用。
 - 计费：`per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，
   单价按上表；缺失 `total_tokens` 时按 `reserve_usd` 结算并记 `usage_source=reserve_fallback`。
 - 超时 `115s`（同步与网关上限 120 秒之内），最大响应 8 MiB，`retry.attempts=1`（不重试）。
@@ -670,6 +679,8 @@ DataForSEO 14 个直连能力（3 个关键词/SERP + 11 个 AI Optimization）�
 为 500000，即 1 quota = $0.000002，三个单价分别对应约 8 / 2.5 / 4 个 token 一个 quota
 单位（结果是整数 quota，四舍五入），不会把这些单价归零。
 缺 `total_tokens` 时按 `reserve_usd` 结算并记 `usage_source=reserve_fallback`。
+2026-11-19 线上实测 grok 单次 188897 token（$0.047）逼近旧的 `$0.06` reserve，
+因此 grok 的 `reserve_usd` 上调为 `$0.10`；kimi 与豆包保持 `$0.03`。
 
 ### 付费调用生命周期与失败计费（2026-10-29 已核实）
 

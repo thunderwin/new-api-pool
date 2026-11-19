@@ -13,6 +13,36 @@
 
 ---
 
+## v0.6.15 — 修正豆包问答为模型记忆问答、grok reserve 上调（2026-11-19）
+
+> 状态：**已实现并离线核实**（`go test -count=1 ./capability/... ./controller/...`、
+> `go build ./...`、`gofmt -l capability controller` 均通过）；**未部署**，
+> 线上发布状态以部署记录为准。
+
+| 类型 | 变更 |
+|---|---|
+| `*` | `ai-answer-doubao-v1`：删掉 `request.consts.tools`（不再发送 `web_search`），`consts` 改为固定 `reasoning: {"effort": "minimal"}`；description 改写为“不联网的模型记忆问答，反映模型自身知识，不返回引用” |
+| `*` | `ai-answer-grok-v1`：`billing.reserve_usd` `$0.06` → `$0.10`，description 里的 reserve 数字同步 |
+| `*` | 两个能力的 endpoint、鉴权、输入输出映射、超时 115s、`retry.attempts=1`、错误映射、单价均不变；能力数量仍为 37 |
+
+**原因（2026-11-19 线上实测）**：
+
+- `ai-answer-doubao-v1` 带 `web_search` 时基本不联网：没有 `url_citation`，回答自称“截至2025年”；
+  默认推理耗时 86–135 秒，超过 115 秒超时被判失败；`reasoning.effort=low` 会把工具调用
+  当文本吐出（`<seed:tool_call> ...`）；`reasoning: {"effort":"minimal"}` 时推理 token 为 0、
+  约 30 秒完成、正常作答但同样不联网。结论：豆包改为“模型记忆问答”——不带 `web_search`，
+  固定 minimal 推理，测的是模型自身（训练数据）是否知道该品牌。
+- `ai-answer-grok-v1` 一次实测 188897 tokens（$0.047），离旧 reserve `$0.06` 太近；
+  计费不封顶，客户端按 `max_usd` 估预算，所以把 reserve 抬到 `$0.10`。
+
+**测试**：`capability/relay_ai_answer_test.go` 现在按能力区分请求体契约：grok 与 kimi
+断言发送 `tools: [{"type":"web_search"}]` 且不发送 `reasoning`，豆包断言**不发送 `tools`**、
+发送 `reasoning: {"effort":"minimal"}`，并断言 grok reserve 为 `$0.10`；
+`controller/capability_relay_ai_test.go` 与 `controller/capability_keyword_test.go`
+同步校验 grok 的 `reserve_usd` / 目录 `max_usd` 为 `$0.10`。
+
+---
+
 ## v0.6.14 — 本站模型联网问答能力（Grok / Kimi / 豆包，2026-11-19）
 
 > 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、
@@ -24,7 +54,7 @@
 | `+` | 入口固定为本站公开 API 域名 `https://api.tokwork.com/v1/responses`（HTTPS，经现有出站 SSRF 防护；不开放 `CAPABILITY_ALLOW_PRIVATE_URLS`，不走回环） |
 | `+` | 请求体：模型常量 + `tools: [{"type":"web_search"}]`；`input` = 必填 `prompt`；`instructions` = 可选 `system_message`（不传不发）；`max_output_tokens` 默认 1500，200–4000 整数 |
 | `+` | 输出：`result` = 整个 `$.output` 数组，`output_text` / `usage` / `model` 为可选便捷字段；成功判定 `$.status` ∈ {`completed`, `incomplete`} |
-| `+` | 计费：`per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，每 token 单价 grok `2.5e-7` / kimi `8e-7` / doubao `5e-7`，reserve `$0.06` / `$0.03` / `$0.03`；缺 `total_tokens` 走 `reserve_fallback` |
+| `+` | 计费：`per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，每 token 单价 grok `2.5e-7` / kimi `8e-7` / doubao `5e-7`，reserve `$0.06` / `$0.03` / `$0.03`（grok 的 reserve 已在 v0.6.15 上调为 `$0.10`）；缺 `total_tokens` 走 `reserve_fallback` |
 | `+` | 新增凭证变量 `CAPABILITY_RELAY_SELF_KEY`（本站运维账号的 API token），在 `ops/deploy/docker-compose.yml` 显式透传；缺失时预扣前返回 `credential_error` |
 | `+` | 通用 Manifest 新增 `response.optional_output`：声明可缺失的输出键，路径不存在时输出 `null` 而不是 `502 missing_output_field`；键必须在 `response.output` 里声明过 |
 | `*` | 嵌入 Manifest 总数 34 → 37；既有 34 个能力的 ID、输入输出、计费和错误语义不变 |
@@ -39,6 +69,7 @@ Grok 稳定联网且有 `url_citation` 注释；Kimi 会联网但来源 URL 在�
 **边界**：不接 Claude（上游把服务端工具变成客户端 `tool_use`）、Gemini（唯一模型已下架）、
 GLM、DeepSeek、longcat、MiniMax（约 49 万 token 且无引用）、hy4（已下架）；GPT 已有
 DataForSEO ChatGPT，不重复接。超时 115 秒（同步与网关上限 120 秒之内），`retry.attempts=1`。
+豆包后来在 v0.6.15 改为不带 `web_search` 的模型记忆问答，本条的“三者都联网”描述已被取代。
 
 **测试**：`capability/relay_ai_answer_test.go` 覆盖 Manifest 契约、请求体（模型常量、
 tools、`input`、可选字段缺省时不发送）、Bearer 头、`completed` / `incomplete` 成功、

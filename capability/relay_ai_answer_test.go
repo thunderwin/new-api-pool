@@ -14,17 +14,19 @@ import (
 const relaySelfKeyFixture = "test-relay-self-key"
 
 type relayAIAnswerCapability struct {
-	id         string
-	model      string
-	priceUSD   float64
-	reserveUSD float64
+	id              string
+	model           string
+	priceUSD        float64
+	reserveUSD      float64
+	webSearch       bool
+	reasoningEffort string
 }
 
 func relayAIAnswerCapabilities() []relayAIAnswerCapability {
 	return []relayAIAnswerCapability{
-		{id: "ai-answer-grok-v1", model: "grok-4.7", priceUSD: 2.5e-7, reserveUSD: 0.06},
-		{id: "ai-answer-kimi-v1", model: "kimi-k3", priceUSD: 8e-7, reserveUSD: 0.03},
-		{id: "ai-answer-doubao-v1", model: "doubao-seed-2.1-pro", priceUSD: 5e-7, reserveUSD: 0.03},
+		{id: "ai-answer-grok-v1", model: "grok-4.7", priceUSD: 2.5e-7, reserveUSD: 0.10, webSearch: true},
+		{id: "ai-answer-kimi-v1", model: "kimi-k3", priceUSD: 8e-7, reserveUSD: 0.03, webSearch: true},
+		{id: "ai-answer-doubao-v1", model: "doubao-seed-2.1-pro", priceUSD: 5e-7, reserveUSD: 0.03, reasoningEffort: "minimal"},
 	}
 }
 
@@ -96,13 +98,25 @@ func TestRelayAIAnswerManifestContracts(t *testing.T) {
 			if !strings.Contains(m.Description, test.model) {
 				t.Fatalf("%s description must name its model %s", test.id, test.model)
 			}
-			tools, ok := m.Request.Consts["tools"].([]any)
-			if !ok || len(tools) != 1 {
-				t.Fatalf("%s must send exactly one tool, got %#v", test.id, m.Request.Consts["tools"])
+			if test.webSearch {
+				tools, ok := m.Request.Consts["tools"].([]any)
+				if !ok || len(tools) != 1 {
+					t.Fatalf("%s must send exactly one tool, got %#v", test.id, m.Request.Consts["tools"])
+				}
+				tool, ok := tools[0].(map[string]any)
+				if !ok || tool["type"] != "web_search" {
+					t.Fatalf("%s must send the web_search tool, got %#v", test.id, tools[0])
+				}
+			} else if value, ok := m.Request.Consts["tools"]; ok {
+				t.Fatalf("%s must not send any tool, got %#v", test.id, value)
 			}
-			tool, ok := tools[0].(map[string]any)
-			if !ok || tool["type"] != "web_search" {
-				t.Fatalf("%s must send the web_search tool, got %#v", test.id, tools[0])
+			if test.reasoningEffort != "" {
+				reasoning, ok := m.Request.Consts["reasoning"].(map[string]any)
+				if !ok || reasoning["effort"] != test.reasoningEffort {
+					t.Fatalf("%s must pin reasoning.effort=%s, got %#v", test.id, test.reasoningEffort, m.Request.Consts["reasoning"])
+				}
+			} else if value, ok := m.Request.Consts["reasoning"]; ok {
+				t.Fatalf("%s must not pin reasoning, got %#v", test.id, value)
 			}
 			if def, ok := m.Request.Defaults["max_output_tokens"]; !ok || !responseValuesEqual(def, 1500) {
 				t.Fatalf("%s must default max_output_tokens to 1500, got %#v", test.id, m.Request.Defaults)
@@ -216,11 +230,24 @@ func TestRelayAIAnswerRequestBodiesAndAuth(t *testing.T) {
 				}
 				for _, want := range []string{
 					`"model":"` + capability.model + `"`,
-					`"tools":[{"type":"web_search"}]`,
 				} {
 					if !strings.Contains(actualRequest, want) {
 						t.Fatalf("%s request body is missing %s: %s", capability.id, want, actualRequest)
 					}
+				}
+				if capability.webSearch {
+					if want := `"tools":[{"type":"web_search"}]`; !strings.Contains(actualRequest, want) {
+						t.Fatalf("%s request body is missing %s: %s", capability.id, want, actualRequest)
+					}
+				} else if strings.Contains(actualRequest, `"tools"`) {
+					t.Fatalf("%s request body must not send tools: %s", capability.id, actualRequest)
+				}
+				if capability.reasoningEffort != "" {
+					if want := `"reasoning":{"effort":"` + capability.reasoningEffort + `"}`; !strings.Contains(actualRequest, want) {
+						t.Fatalf("%s request body is missing %s: %s", capability.id, want, actualRequest)
+					}
+				} else if strings.Contains(actualRequest, `"reasoning"`) {
+					t.Fatalf("%s request body must not send reasoning: %s", capability.id, actualRequest)
 				}
 				for _, want := range test.want {
 					if !strings.Contains(actualRequest, want) {

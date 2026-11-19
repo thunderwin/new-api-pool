@@ -367,7 +367,7 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	if len(entries) != 37 {
 		t.Fatalf("expected 37 directory entries, got %d", len(entries))
 	}
-	if entries["ai-answer-grok-v1"] != 0.06 ||
+	if entries["ai-answer-grok-v1"] != 0.10 ||
 		entries["ai-answer-kimi-v1"] != 0.03 ||
 		entries["ai-answer-doubao-v1"] != 0.03 {
 		t.Fatalf("relay answer capabilities have unexpected max_usd: %#v", entries)

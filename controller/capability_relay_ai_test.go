@@ -51,7 +51,7 @@ func TestRelayAIAnswerBillsTotalTokens(t *testing.T) {
 		priceUSD   float64
 		reserveUSD float64
 	}{
-		{sourceID: "ai-answer-grok-v1", model: "grok-4.7", priceUSD: 2.5e-7, reserveUSD: 0.06},
+		{sourceID: "ai-answer-grok-v1", model: "grok-4.7", priceUSD: 2.5e-7, reserveUSD: 0.10},
 		{sourceID: "ai-answer-kimi-v1", model: "kimi-k3", priceUSD: 8e-7, reserveUSD: 0.03},
 		{sourceID: "ai-answer-doubao-v1", model: "doubao-seed-2.1-pro", priceUSD: 5e-7, reserveUSD: 0.03},
 	}

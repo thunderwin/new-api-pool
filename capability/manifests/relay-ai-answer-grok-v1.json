@@ -2,7 +2,7 @@
   "id": "ai-answer-grok-v1",
   "provider": "relay",
   "mode": "sync",
-  "description": "Asks grok-4.7 one buyer question over the local OpenAI-compatible /v1/responses endpoint with the built-in web_search tool, and returns the answer together with the cited sources: result is the full Responses output array (message text plus url_citation annotations and web_search_call items), and output_text, usage, model are convenience fields. Billed per token on usage.total_tokens at $0.00000025 per token; reserve cap is $0.06 per call.",
+  "description": "Asks grok-4.7 one buyer question over the local OpenAI-compatible /v1/responses endpoint with the built-in web_search tool, and returns the answer together with the cited sources: result is the full Responses output array (message text plus url_citation annotations and web_search_call items), and output_text, usage, model are convenience fields. Billed per token on usage.total_tokens at $0.00000025 per token; reserve cap is $0.10 per call.",
   "endpoint": "https://api.tokwork.com/v1/responses",
   "method": "POST",
   "auth": {
@@ -121,7 +121,7 @@
     "unit": "token",
     "price_usd": 2.5e-7,
     "quantity_path": "$.usage.total_tokens",
-    "reserve_usd": 0.06
+    "reserve_usd": 0.1
   },
   "limits": {
     "timeout": "115s",

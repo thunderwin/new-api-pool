@@ -67,22 +67,29 @@
   不调用任何第三方 API，`per_call` 且 `price_usd=0`（见 R13）。
   这 12 个能力**已实现并离线核实**（`go test ./capability/... ./controller/...`），
   线上是否已发布以部署记录为准。
-- 2026-11-19 已核实（离线）：新增 3 个**本站模型联网问答**能力
+- 2026-11-19 已核实（离线）：新增 3 个**本站模型问答**能力
   `ai-answer-grok-v1`（grok-4.7）、`ai-answer-kimi-v1`（kimi-k3）、
   `ai-answer-doubao-v1`（doubao-seed-2.1-pro）。三者 `provider: relay`、`mode: sync`，
   endpoint 固定为本站公开 API 域名 `https://api.tokwork.com/v1/responses`（HTTPS，
   走现有出站 SSRF 防护，不开放 `CAPABILITY_ALLOW_PRIVATE_URLS`、不走回环），
   Bearer 凭证来自 `CAPABILITY_RELAY_SELF_KEY`（一个本站运维账号的 API token，
   只写变量名，值由运维用 `set-capability-secret.sh` 单独设置）。
-  请求体固定 `tools: [{"type":"web_search"}]` 和各自模型常量，`input` 为必填
+  请求体固定各自模型常量，`input` 为必填
   `prompt`、`instructions` 为可选 `system_message`、`max_output_tokens` 默认 1500
   （200–4000 整数）；成功判定 `$.status` 为 `completed` 或 `incomplete`；
   计费 `per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，单价
   每 token 美元 grok `2.5e-7` / kimi `8e-7` / doubao `5e-7`，reserve 分别为
-  `$0.06` / `$0.03` / `$0.03`。
+  `$0.10` / `$0.03` / `$0.03`。
+  Grok 与 Kimi 请求体带 `tools: [{"type":"web_search"}]`；豆包**不带**任何工具，
+  而是固定 `reasoning: {"effort": "minimal"}`。
   语义差异落在各自 description：Grok 稳定联网并给出 `url_citation` 注释；
-  Kimi 的来源 URL 写在正文里、没有注释；豆包由模型自己决定是否联网，
-  搜了才有引用，`tool_choice: "required"` 对上游无效。
+  Kimi 的来源 URL 写在正文里、没有注释；豆包是**不联网的模型记忆问答**，
+  答案反映模型训练数据里对品牌的认知，不返回引用。
+  2026-11-19 线上实测（严格按 2026-11-19 当天的 manifest）：豆包带 `web_search` 时
+  默认推理要 86–135 秒（超过 115 秒超时被判失败）、基本不产生 `url_citation`、
+  `reasoning.effort=low` 会把工具调用当文本吐出（`<seed:tool_call>`），
+  `effort=minimal` 时推理 token 为 0、约 30 秒完成但同样不联网；grok 单次实测
+  188897 token（$0.047）逼近 reserve，故 reserve 由 `$0.06` 上调到 `$0.10`。
   这 3 个能力**已实现并离线核实**，未部署，线上发布状态以部署记录为准。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
@@ -628,7 +635,8 @@ limits:
 > （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、14 个
 > DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）、
 > `web-search-v1`（DeepSeek Search，同步）、3 个经本站 `/v1/responses` 的模型问答能力
-> （`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，`provider: relay`）
+> （`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，`provider: relay`；
+> grok 与 kimi 联网问答，豆包为不联网的模型记忆问答）
 > 和 `geo-site-audit-v1`（原生 GEO 体检，同步）
 > 已接入，编码后共 37 个能力。
 > `weather-v1`、`ssl-analyze-v1` 与 `geo-site-audit-v1` 是免费试点；AISA 按上游
