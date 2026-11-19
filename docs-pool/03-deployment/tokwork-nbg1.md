@@ -537,6 +537,26 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 线上核对 | 部署后到 `10:28Z` 没有任何调用进来，待第一批 Claude 调用后核对 `logs.other` 的 `cache_tokens` / `cache_creation_tokens` 与 Wokey `/v1/requests` 金额 |
 | 回滚 | 未触发 |
 
+#### 2026-11-19 发布 AI Optimization 能力与原生 GEO 体检
+
+> 以下为已核实事实。只换二进制；compose 与 `.env` 未改。能力从 22 个增加到 34 个：11 个 DataForSEO AI Optimization（changelog v0.6.12）和原生 `geo-site-audit-v1`（v0.6.13）。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `82d6c8fc` |
+| 部署前核对 | 服务器二进制与 compose 的 SHA-256 前缀分别为 `5c8525c53298`、`7f50f6b55749`，与 2026-11-17 记录一致 |
+| 开始时间 | `2026-11-19T04:24:09Z`（备份） |
+| 新容器启动 | `2026-11-19T04:24:50Z` |
+| 重建窗口 | `04:24:50Z` → `04:25:00Z`（healthy），约 10 秒 |
+| 二进制 SHA-256 | `f89ff6ff1a5ee18adb740e51465ab9e356d1da052e9b4e518d42c3602603ea4e` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| compose / `.env` | 与备份逐字节相同 |
+| 回滚备份 | `new-api.bak-20261119-042409`、`docker-compose.yml.bak-20261119-042409`、`.env.bak-20261119-042409` |
+| 健康 | `new-api-app` healthy；公开 `/api/status` 返回 200；新容器日志无 panic/fatal |
+| 离线回归 | 同一提交 `go test ./capability/... ./controller/...` 通过 |
+| 线上冒烟 | 经下游客户网关用普通用户会话调用：能力目录 34 个、无缺失；11 个新能力（4 个 llm_responses、2 个网页抓取、AI Mode、带 AI Overview 的 `serp-google-v1`、`llm-mentions-search-v1`、`ai-keyword-volume-v1`、`geo-site-audit-v1`）各调用一次全部成功，合计约 $0.32。`geo-site-audit-v1` 计费 $0；Gemini llm_responses 不返回 `search_results` |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
