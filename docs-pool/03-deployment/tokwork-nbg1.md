@@ -218,7 +218,7 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
 | `CAPABILITY_DATAFORSEO_LOGIN` | DataForSEO API login，供三个直连关键词能力使用 | **是** |
 | `CAPABILITY_DATAFORSEO_PASSWORD` | DataForSEO API password，供三个直连关键词能力使用 | **是** |
-| `CAPABILITY_RELAY_SELF_KEY` | 本站运维账号的 API token（`sk-...`），供 3 个 `relay` 问答能力调用本站 `https://api.tokwork.com/v1/responses` 使用；**2026-11-19 已实现、待部署设置** | **是** |
+| `CAPABILITY_RELAY_SELF_KEY` | 本站运维账号的 API token（`sk-...`），供 3 个 `relay` 问答能力调用本站 `https://api.tokwork.com/v1/responses` 使用；2026-11-19 已部署（见 8.1 节同日记录） | **是** |
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
@@ -563,6 +563,43 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 健康 | `new-api-app` healthy；公开 `/api/status` 返回 200；新容器日志无 panic/fatal |
 | 离线回归 | 同一提交 `go test ./capability/... ./controller/...` 通过 |
 | 线上冒烟 | 经下游客户网关用普通用户会话调用：能力目录 34 个、无缺失；11 个新能力（4 个 llm_responses、2 个网页抓取、AI Mode、带 AI Overview 的 `serp-google-v1`、`llm-mentions-search-v1`、`ai-keyword-volume-v1`、`geo-site-audit-v1`）各调用一次全部成功，合计约 $0.32。`geo-site-audit-v1` 计费 $0；Gemini llm_responses 不返回 `search_results` |
+| 回滚 | 未触发 |
+
+#### 2026-11-19 发布本站模型问答能力（grok / kimi / doubao）
+
+> 以下为已核实事实。能力从 34 个增加到 37 个（changelog v0.6.14）。本次改了 compose 和 `.env`：新增并透传 `CAPABILITY_RELAY_SELF_KEY`。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `46171493` |
+| 开始时间 | `2026-11-19T06:36:56Z`（备份；`063520`、`063544` 两组备份来自同日两次未完成的尝试；三组备份内容相同，二进制与 compose 的 SHA-256 前缀为 `f89ff6ff1a5e`、`7f50f6b55749`，即 04:24 发布后的状态） |
+| 新容器启动 | `2026-11-19T06:37:02Z` |
+| 重建窗口 | `06:37:02Z` → `06:37:08Z`（healthy），约 6 秒 |
+| 二进制 SHA-256 | `fe64fcd17514c7ca791db56901bdf43fdb0e554004a32c747d005271152d5ddc` |
+| compose | SHA-256 前缀 `03ce86253474`；`new-api.environment` 新增 `CAPABILITY_RELAY_SELF_KEY` |
+| `.env` | 新增 `CAPABILITY_RELAY_SELF_KEY`（值不入库） |
+| 本站 token | 管理员 token 文件已失效，因此直接在数据库为运维账号（用户 1）插入一行 token，名称 `capability-relay-self`，不限额，`model_limits` 只含这 3 个能力用到的模型 |
+| 回滚备份 | `new-api.bak-20261119-063656`、`docker-compose.yml.bak-20261119-063656`、`.env.bak-20261119-063656` |
+| 健康 | `new-api-app` healthy；新容器日志无 panic/fatal |
+| 线上冒烟 | 经下游客户网关调用：目录 37 个；3 个新能力各调用一次成功 |
+| 回滚 | 未触发 |
+
+#### 2026-11-19 豆包改为模型记忆问答、grok reserve 上调
+
+> 以下为已核实事实。只换二进制；compose 与 `.env` 未改（changelog v0.6.15）。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `6cea7aad` |
+| 开始时间 | `2026-11-19T06:53:33Z`（备份） |
+| 新容器启动 | `2026-11-19T06:53:38Z` |
+| 重建窗口 | `06:53:38Z` → `06:53:44Z`（healthy），约 6 秒 |
+| 二进制 SHA-256 | `2bd0e6b5dd3433c0636d64b792af0d8ca4ec204bfba6587d2495512c08e41443` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| compose / `.env` | 与备份逐字节相同 |
+| 回滚备份 | `new-api.bak-20261119-065333` |
+| 健康 | `new-api-app` healthy；新容器日志无 panic/fatal |
+| 线上冒烟 | 经下游客户网关调用：目录 37 个；grok（带 `url_citation`）约 $0.046、kimi 约 $0.008、doubao（不联网）约 $0.001，均成功 |
 | 回滚 | 未触发 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
