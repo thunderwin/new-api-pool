@@ -232,6 +232,10 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	for key, path := range m.Response.Output {
 		value, ok := Lookup(raw, path)
 		if !ok {
+			if m.Response.OptionalOutputContains(key) {
+				output[key] = nil
+				continue
+			}
 			return nil, attachResponseMetadata(&ExecutionError{
 				Code:       "missing_output_field",
 				Message:    "upstream response did not contain a required field",

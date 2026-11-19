@@ -109,13 +109,18 @@ type ContentSpec struct {
 }
 
 type ResponseSpec struct {
-	Output        map[string]string         `json:"output"`
-	Collections   map[string]CollectionSpec `json:"collections,omitempty"`
-	Success       *SuccessSpec              `json:"success,omitempty"`
-	StatusHeader  string                    `json:"status_header,omitempty"`
-	ErrorHeader   string                    `json:"error_header,omitempty"`
-	ErrorCodePath string                    `json:"error_code_path,omitempty"`
-	ErrorMap      map[string]ErrorMapSpec   `json:"error_map,omitempty"`
+	Output map[string]string `json:"output"`
+	// OptionalOutput lists output keys whose declared path may be missing in
+	// the upstream response. Missing optional paths map to null instead of
+	// failing the call, which keeps vendor-specific convenience fields (for
+	// example an SDK-only output_text) out of the capability contract.
+	OptionalOutput []string                  `json:"optional_output,omitempty"`
+	Collections    map[string]CollectionSpec `json:"collections,omitempty"`
+	Success        *SuccessSpec              `json:"success,omitempty"`
+	StatusHeader   string                    `json:"status_header,omitempty"`
+	ErrorHeader    string                    `json:"error_header,omitempty"`
+	ErrorCodePath  string                    `json:"error_code_path,omitempty"`
+	ErrorMap       map[string]ErrorMapSpec   `json:"error_map,omitempty"`
 }
 
 type CollectionSpec struct {
@@ -345,6 +350,20 @@ func (m *Manifest) Validate() error {
 			}
 		}
 		if m.Response != nil {
+			seenOptional := map[string]struct{}{}
+			for _, key := range m.Response.OptionalOutput {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					return fmt.Errorf("manifest %s: response.optional_output contains an empty key", m.ID)
+				}
+				if _, declared := m.Response.Output[key]; !declared {
+					return fmt.Errorf("manifest %s: response.optional_output.%s must be declared in response.output", m.ID, key)
+				}
+				if _, exists := seenOptional[key]; exists {
+					return fmt.Errorf("manifest %s: response.optional_output contains duplicate key %s", m.ID, key)
+				}
+				seenOptional[key] = struct{}{}
+			}
 			for key, spec := range m.Response.Collections {
 				if strings.TrimSpace(key) == "" || strings.TrimSpace(spec.Path) == "" ||
 					(len(spec.Fields) == 0 && len(spec.FieldPaths) == 0) {
@@ -519,6 +538,20 @@ func (m *Manifest) Timeout() (time.Duration, error) {
 		return 0, fmt.Errorf("timeout must be between 1s and 10m")
 	}
 	return d, nil
+}
+
+// OptionalOutputContains reports whether the given response.output key is
+// declared in response.optional_output, so a missing path maps to null.
+func (s *ResponseSpec) OptionalOutputContains(key string) bool {
+	if s == nil {
+		return false
+	}
+	for _, candidate := range s.OptionalOutput {
+		if candidate == key {
+			return true
+		}
+	}
+	return false
 }
 
 // EmptyResponse reports whether a declared response success path is empty and

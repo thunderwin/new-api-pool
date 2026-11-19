@@ -352,6 +352,18 @@ AI 可见性能力（11 个，DataForSEO AI Optimization 直连，同样按响�
 | `llm-mentions-top-pages-v1` | AI 答案里被引用最多的页面 | 同 top-domains | $0.25 |
 | `ai-keyword-volume-v1` | AI 搜索量与 12 个月趋势 | **必填** `keywords`（1–200 个）、可选 地区、语言 | $0.05 |
 
+本站模型联网问答（3 个，2026-11-19 已实现、**待部署**；按 `usage.total_tokens` 计费）：
+
+| ID | 用途 | 关键输入 | 计费 |
+|---|---|---|---|
+| `ai-answer-grok-v1` | 问 grok-4.7 一个买家问题，拿答案与 `url_citation` 引用 | **必填** `prompt`；可选 `system_message`、`max_output_tokens`（默认 1500，200–4000） | 每 token $0.00000025，单次上限 $0.06 |
+| `ai-answer-kimi-v1` | 同上，kimi-k3；**来源 URL 写在正文里**，没有 `url_citation` 注释 | 同上 | 每 token $0.0000008，单次上限 $0.03 |
+| `ai-answer-doubao-v1` | 同上，doubao-seed-2.1-pro；模型自己决定是否联网，搜了才有引用 | 同上 | 每 token $0.0000005，单次上限 $0.03 |
+
+三个能力的 `output.result` 是整个 Responses `output` 数组（`message` 分段、
+`web_search_call`、`url_citation` 注释），`output_text`、`usage`、`model` 是便捷字段，
+上游没返回时为 `null`。模型由能力固定，不能通过输入换模型。
+
 原有 AISA 能力的地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
 `keyword-ideas-v1` 和 `keyword-volume-v1` 使用 `location_name`，默认
 `United States` / 英语，例如可覆盖为 `"location_name": "Germany"`、`"language_code": "de"`。

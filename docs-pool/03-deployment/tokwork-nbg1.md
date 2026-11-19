@@ -218,6 +218,7 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
 | `CAPABILITY_DATAFORSEO_LOGIN` | DataForSEO API login，供三个直连关键词能力使用 | **是** |
 | `CAPABILITY_DATAFORSEO_PASSWORD` | DataForSEO API password，供三个直连关键词能力使用 | **是** |
+| `CAPABILITY_RELAY_SELF_KEY` | 本站运维账号的 API token（`sk-...`），供 3 个 `relay` 问答能力调用本站 `https://api.tokwork.com/v1/responses` 使用；**2026-11-19 已实现、待部署设置** | **是** |
 
 以上变量都必须在 `ops/deploy/docker-compose.yml` 的 `new-api.environment`
 显式透传；只写 `.env` 不会进入容器。缺 Bright Data 变量时 `web-unlock-v1` 返回
@@ -225,6 +226,12 @@ Capability 凭证值只写进服务器 `.env`：
 DataForSEO login 或 password 任一缺失时，三个直连关键词能力在预扣前返回
 `credential_error`。
 缺 DeepSeek key 时 `web-search-v1` 返回 `credential_error`。
+缺 `CAPABILITY_RELAY_SELF_KEY` 时 `ai-answer-grok-v1` / `ai-answer-kimi-v1` /
+`ai-answer-doubao-v1` 同样返回 `credential_error`。
+`CAPABILITY_RELAY_SELF_KEY` 与其它上游 key 不同：它是**本站自己的** API token，
+建议用一个单独的运维账号签发，只发给这三个能力；它在服务端以 Bearer 头发往
+`https://api.tokwork.com/v1/responses`，不经过回环地址，也不需要
+`CAPABILITY_ALLOW_PRIVATE_URLS`。
 这些情况都不会调用上游、不扣费。
 
 API key 用交互脚本设置，不要在命令行参数、聊天或文档里传值：
@@ -236,6 +243,7 @@ cd /path/to/new-api-pool
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_LOGIN
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_PASSWORD
+./ops/deploy/set-capability-secret.sh CAPABILITY_RELAY_SELF_KEY
 ```
 
 脚本默认目标 `root@2.31.8.21`、远端目录 `/opt/new-api-pool`，可用

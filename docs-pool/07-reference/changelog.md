@@ -13,6 +13,42 @@
 
 ---
 
+## v0.6.14 — 本站模型联网问答能力（Grok / Kimi / 豆包，2026-11-19）
+
+> 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、
+> `go build ./...` 均通过）；**未部署**，线上发布状态以部署记录为准。
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增 3 个同步能力 `ai-answer-grok-v1`（grok-4.7）、`ai-answer-kimi-v1`（kimi-k3）、`ai-answer-doubao-v1`（doubao-seed-2.1-pro），`provider: relay`，只写 Manifest |
+| `+` | 入口固定为本站公开 API 域名 `https://api.tokwork.com/v1/responses`（HTTPS，经现有出站 SSRF 防护；不开放 `CAPABILITY_ALLOW_PRIVATE_URLS`，不走回环） |
+| `+` | 请求体：模型常量 + `tools: [{"type":"web_search"}]`；`input` = 必填 `prompt`；`instructions` = 可选 `system_message`（不传不发）；`max_output_tokens` 默认 1500，200–4000 整数 |
+| `+` | 输出：`result` = 整个 `$.output` 数组，`output_text` / `usage` / `model` 为可选便捷字段；成功判定 `$.status` ∈ {`completed`, `incomplete`} |
+| `+` | 计费：`per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，每 token 单价 grok `2.5e-7` / kimi `8e-7` / doubao `5e-7`，reserve `$0.06` / `$0.03` / `$0.03`；缺 `total_tokens` 走 `reserve_fallback` |
+| `+` | 新增凭证变量 `CAPABILITY_RELAY_SELF_KEY`（本站运维账号的 API token），在 `ops/deploy/docker-compose.yml` 显式透传；缺失时预扣前返回 `credential_error` |
+| `+` | 通用 Manifest 新增 `response.optional_output`：声明可缺失的输出键，路径不存在时输出 `null` 而不是 `502 missing_output_field`；键必须在 `response.output` 里声明过 |
+| `*` | 嵌入 Manifest 总数 34 → 37；既有 34 个能力的 ID、输入输出、计费和错误语义不变 |
+
+**原因**：ericBot 的「AI 可见性」要把同一个买家问题去问各家 AI，看回答里是否提到客户品牌。
+DataForSEO 已覆盖 ChatGPT / Claude / Gemini / Perplexity，本站自己的 Grok / Kimi / 豆包
+可以补上这三家。2026-11-19 实测（经本站 `/v1/responses` + `tools:[{"type":"web_search"}]`）：
+Grok 稳定联网且有 `url_citation` 注释；Kimi 会联网但来源 URL 在正文里；豆包由模型自己
+决定是否联网，`tool_choice: "required"` 不生效。三者都能返回可解析的答案与引用，
+因此按 `usage.total_tokens` 计费接入。
+
+**边界**：不接 Claude（上游把服务端工具变成客户端 `tool_use`）、Gemini（唯一模型已下架）、
+GLM、DeepSeek、longcat、MiniMax（约 49 万 token 且无引用）、hy4（已下架）；GPT 已有
+DataForSEO ChatGPT，不重复接。超时 115 秒（同步与网关上限 120 秒之内），`retry.attempts=1`。
+
+**测试**：`capability/relay_ai_answer_test.go` 覆盖 Manifest 契约、请求体（模型常量、
+tools、`input`、可选字段缺省时不发送）、Bearer 头、`completed` / `incomplete` 成功、
+可选输出缺失映射为 `null`、400/401/403/429/5xx 与 200 内 `failed` 的错误映射、缺凭证时
+预扣前失败；`controller/capability_relay_ai_test.go` 覆盖按 `total_tokens` 计费
+（`usage_source=response_body`）、缺 usage 时按 reserve 结算，以及缺
+`CAPABILITY_RELAY_SELF_KEY` 时不调上游、不扣费、不写消费日志。
+
+---
+
 ## v0.6.13 — 原生 GEO 站点体检能力（2026-11-19）
 
 | 类型 | 变更 |

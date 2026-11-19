@@ -111,6 +111,10 @@ services:
       CAPABILITY_DEEPSEEK_API_KEY: ${CAPABILITY_DEEPSEEK_API_KEY:-}
       CAPABILITY_DATAFORSEO_LOGIN: ${CAPABILITY_DATAFORSEO_LOGIN:-}
       CAPABILITY_DATAFORSEO_PASSWORD: ${CAPABILITY_DATAFORSEO_PASSWORD:-}
+      # API token of a local operations account, used by the relay-backed
+      # ai-answer-grok-v1 / ai-answer-kimi-v1 / ai-answer-doubao-v1 capabilities
+      # to call this instance's own /v1/responses endpoint.
+      CAPABILITY_RELAY_SELF_KEY: ${CAPABILITY_RELAY_SELF_KEY:-}
       NODE_TYPE: master
       NODE_NAME: tokwork-nbg1
       # 本服务只做 API：设了这个变量后，未注册的网页路径（例如有人直接打开

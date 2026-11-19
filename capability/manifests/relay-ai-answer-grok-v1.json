@@ -1,0 +1,134 @@
+{
+  "id": "ai-answer-grok-v1",
+  "provider": "relay",
+  "mode": "sync",
+  "description": "Asks grok-4.7 one buyer question over the local OpenAI-compatible /v1/responses endpoint with the built-in web_search tool, and returns the answer together with the cited sources: result is the full Responses output array (message text plus url_citation annotations and web_search_call items), and output_text, usage, model are convenience fields. Billed per token on usage.total_tokens at $0.00000025 per token; reserve cap is $0.06 per call.",
+  "endpoint": "https://api.tokwork.com/v1/responses",
+  "method": "POST",
+  "auth": {
+    "type": "bearer",
+    "secret_ref": "CAPABILITY_RELAY_SELF_KEY"
+  },
+  "request": {
+    "content_type": "application/json",
+    "required": [
+      "prompt"
+    ],
+    "body": {
+      "input": "$.input.prompt",
+      "instructions": "$.input.system_message",
+      "max_output_tokens": "$.input.max_output_tokens"
+    },
+    "defaults": {
+      "max_output_tokens": 1500
+    },
+    "ranges": {
+      "max_output_tokens": {
+        "min": 200,
+        "max": 4000,
+        "integer": true
+      }
+    },
+    "consts": {
+      "model": "grok-4.7",
+      "tools": [
+        {
+          "type": "web_search"
+        }
+      ]
+    }
+  },
+  "response": {
+    "success": {
+      "path": "$.status",
+      "values": [
+        "completed",
+        "incomplete"
+      ],
+      "failure_code": "upstream_response_failed"
+    },
+    "output": {
+      "result": "$.output",
+      "output_text": "$.output_text",
+      "usage": "$.usage",
+      "model": "$.model"
+    },
+    "optional_output": [
+      "output_text",
+      "usage",
+      "model"
+    ],
+    "error_code_path": "$.error.code",
+    "error_map": {
+      "400": {
+        "code": "invalid_request",
+        "http_status": 400,
+        "message": "The answer request parameters are invalid.",
+        "log_code": "upstream_invalid_request"
+      },
+      "401": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_authentication"
+      },
+      "403": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_authentication"
+      },
+      "429": {
+        "code": "upstream_rate_limited",
+        "http_status": 429,
+        "message": "The answer service is rate limited; retry later.",
+        "log_code": "upstream_rate_limited"
+      },
+      "500": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      },
+      "502": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      },
+      "503": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_unavailable"
+      },
+      "504": {
+        "code": "upstream_timeout",
+        "http_status": 504,
+        "message": "The answer request timed out; retry later.",
+        "log_code": "upstream_downstream_timeout"
+      },
+      "failed": {
+        "code": "upstream_unavailable",
+        "http_status": 503,
+        "message": "The answer service is temporarily unavailable.",
+        "log_code": "upstream_provider_failure"
+      }
+    }
+  },
+  "billing": {
+    "type": "per_unit",
+    "unit": "token",
+    "price_usd": 2.5e-7,
+    "quantity_path": "$.usage.total_tokens",
+    "reserve_usd": 0.06
+  },
+  "limits": {
+    "timeout": "115s",
+    "max_response_bytes": 8388608
+  },
+  "retry": {
+    "attempts": 1,
+    "retry_on": []
+  }
+}

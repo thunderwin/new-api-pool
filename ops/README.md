@@ -62,11 +62,17 @@ ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker c
    ./ops/deploy/set-capability-secret.sh
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
+   ./ops/deploy/set-capability-secret.sh CAPABILITY_RELAY_SELF_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY --dry-run
    ./ops/deploy/set-capability-secret.sh --dry-run
    # 若 SSH 未在 ~/.ssh/config 绑定该主机：
    SSH_IDENTITY_FILE="$HOME/.ssh/id_ed25519_tokwork" ./ops/deploy/set-capability-secret.sh
    ```
+
+   `CAPABILITY_RELAY_SELF_KEY` 与其它变量不同：它是**本站运维账号的 API token**
+   （`sk-...`），供 `ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`
+   调用本站 `https://api.tokwork.com/v1/responses`。2026-11-19 已加入 compose 透传，
+   尚未在线上设置（待部署）。
 
    变量名只允许 `^CAPABILITY_[A-Z0-9_]+$`。不带变量名时保持 Bright Data 行为。
    API key 由交互输入或 stdin 重定向提供；不要把它放进命令行参数、shell history

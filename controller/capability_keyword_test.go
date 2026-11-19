@@ -364,8 +364,13 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	for _, item := range response.Data {
 		entries[item.ID] = item.Billing.MaxUSD
 	}
-	if len(entries) != 34 {
-		t.Fatalf("expected 34 directory entries, got %d", len(entries))
+	if len(entries) != 37 {
+		t.Fatalf("expected 37 directory entries, got %d", len(entries))
+	}
+	if entries["ai-answer-grok-v1"] != 0.06 ||
+		entries["ai-answer-kimi-v1"] != 0.03 ||
+		entries["ai-answer-doubao-v1"] != 0.03 {
+		t.Fatalf("relay answer capabilities have unexpected max_usd: %#v", entries)
 	}
 	if entries["keyword-ideas-v1"] != 0.04 ||
 		entries["keyword-volume-v1"] != 0.04 ||

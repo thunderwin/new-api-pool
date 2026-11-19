@@ -52,9 +52,10 @@
   （0–100，取自上游 `keyword_properties`，不额外计费），其余字段不变。
   三个能力的单次 reserve 分别为 $0.04 / $0.04 / $0.21。是否已经发布到线上只能以
   当次运维报告和部署记录为准；仓库代码改动本身不代表已上线。
-- 2026-11-19 已核实：Capability 层共有 **34 个能力**，其中 33 个走第三方 HTTP API
-  （15 个经 AISA、**14 个直连 DataForSEO**、4 个其它供应商：Open-Meteo、SSL Labs、
-  Bright Data、DeepSeek），另有 1 个**原生能力** `geo-site-audit-v1`。
+- 2026-11-19 已核实：Capability 层共有 **37 个能力**，其中 36 个走 HTTP API
+  （15 个经 AISA、**14 个直连 DataForSEO**、**3 个经本站 `/v1/responses` 的 `relay` 能力**、
+  4 个其它供应商：Open-Meteo、SSL Labs、Bright Data、DeepSeek），
+  另有 1 个**原生能力** `geo-site-audit-v1`。
   本日新增 11 个 DataForSEO「AI Optimization」直连能力（同属 `dataforseo` provider、
   HTTP Basic 鉴权、单元素数组 body、`$.cost` 按成本价结算）：
   `ai-answer-chatgpt-v1`、`ai-answer-claude-v1`、`ai-answer-gemini-v1`、
@@ -66,6 +67,23 @@
   不调用任何第三方 API，`per_call` 且 `price_usd=0`（见 R13）。
   这 12 个能力**已实现并离线核实**（`go test ./capability/... ./controller/...`），
   线上是否已发布以部署记录为准。
+- 2026-11-19 已核实（离线）：新增 3 个**本站模型联网问答**能力
+  `ai-answer-grok-v1`（grok-4.7）、`ai-answer-kimi-v1`（kimi-k3）、
+  `ai-answer-doubao-v1`（doubao-seed-2.1-pro）。三者 `provider: relay`、`mode: sync`，
+  endpoint 固定为本站公开 API 域名 `https://api.tokwork.com/v1/responses`（HTTPS，
+  走现有出站 SSRF 防护，不开放 `CAPABILITY_ALLOW_PRIVATE_URLS`、不走回环），
+  Bearer 凭证来自 `CAPABILITY_RELAY_SELF_KEY`（一个本站运维账号的 API token，
+  只写变量名，值由运维用 `set-capability-secret.sh` 单独设置）。
+  请求体固定 `tools: [{"type":"web_search"}]` 和各自模型常量，`input` 为必填
+  `prompt`、`instructions` 为可选 `system_message`、`max_output_tokens` 默认 1500
+  （200–4000 整数）；成功判定 `$.status` 为 `completed` 或 `incomplete`；
+  计费 `per_unit`、`unit=token`、`quantity_path=$.usage.total_tokens`，单价
+  每 token 美元 grok `2.5e-7` / kimi `8e-7` / doubao `5e-7`，reserve 分别为
+  `$0.06` / `$0.03` / `$0.03`。
+  语义差异落在各自 description：Grok 稳定联网并给出 `url_citation` 注释；
+  Kimi 的来源 URL 写在正文里、没有注释；豆包由模型自己决定是否联网，
+  搜了才有引用，`tool_choice: "required"` 对上游无效。
+  这 3 个能力**已实现并离线核实**，未部署，线上发布状态以部署记录为准。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -440,6 +458,10 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 
 2026-11-19 新增的 Manifest 通用能力：
 
+- `response.optional_output`：`response.output` 中允许缺失的键数组。上游正文没有该路径时
+  输出 `null`，不再返回 `502 missing_output_field`；未列出的键保持原有“缺字段即失败”语义，
+  且每个键必须在 `response.output` 里声明过。用于 OpenAI 兼容响应里由 SDK 拼出的
+  `output_text` 这类可选便捷字段（3 个 `relay` 问答能力使用）。
 - `request.enums`：`{输入字段: [允许值...]}` 的枚举约束。在预扣费和上游调用之前校验，
   值不在列表（按字符串比较）返回 `400 invalid_request`；未传且无默认值时跳过校验。
   Manifest 加载阶段拒绝空字段名、空允许值列表和非标量允许值。
@@ -605,11 +627,14 @@ limits:
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
 > （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、14 个
 > DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）、
-> `web-search-v1`（DeepSeek Search，同步）和 `geo-site-audit-v1`（原生 GEO 体检，同步）
-> 已接入，编码后共 34 个能力。
+> `web-search-v1`（DeepSeek Search，同步）、3 个经本站 `/v1/responses` 的模型问答能力
+> （`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，`provider: relay`）
+> 和 `geo-site-audit-v1`（原生 GEO 体检，同步）
+> 已接入，编码后共 37 个能力。
 > `weather-v1`、`ssl-analyze-v1` 与 `geo-site-audit-v1` 是免费试点；AISA 按上游
-> 实际成本结算；DataForSEO 直连能力按响应正文 `cost` 结算；
+> 实际成本结算；DataForSEO 直连能力按响应正文 `cost` 结算；3 个 `relay` 问答能力
+> 按 `usage.total_tokens` × 每 token 单价结算（reserve 兜底）；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
-> 11 个 AI Optimization 能力已实现并在离线测试中核实（2026-11-19），
-> 线上发布状态以部署记录为准。
+> 11 个 AI Optimization 能力和 3 个 `relay` 问答能力已实现并在离线测试中核实
+> （2026-11-19），线上发布状态以部署记录为准。
 > 多供应商路由、后台 Manifest 编辑、SSE 流式仍在 Phase 2/3。
