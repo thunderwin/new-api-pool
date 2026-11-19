@@ -619,6 +619,42 @@ func TestEmptyOKMakesEmptyResponseSuccessfulWithoutChangingLegacyDefault(t *test
 	}
 }
 
+func TestManifestEnumInputsAreValidated(t *testing.T) {
+	manifest := func() *Manifest {
+		return &Manifest{
+			ID:       "enum-test-v1",
+			Provider: "test",
+			Mode:     ModeSync,
+			Endpoint: "https://example.com",
+			Method:   http.MethodPost,
+			Request: &RequestSpec{
+				Enums:    map[string][]any{"platform": {"chat_gpt", "google"}},
+				Defaults: map[string]any{"platform": "chat_gpt"},
+			},
+			Response: &ResponseSpec{Output: map[string]string{"ok": "$.ok"}},
+			Billing:  BillingSpec{Type: BillingPerCall, Unit: "call"},
+			Limits:   LimitsSpec{Timeout: "5s", MaxResponseBytes: 1024},
+		}
+	}
+	if err := manifest().Validate(); err != nil {
+		t.Fatalf("enum manifest should validate: %v", err)
+	}
+
+	allowed := []any{"chat_gpt", "google"}
+	if execErr := ValidateSync(manifest(), map[string]any{}); execErr != nil {
+		t.Fatalf("the default enum value should be accepted: %v", execErr)
+	}
+	if execErr := ValidateSync(manifest(), map[string]any{"platform": allowed[1]}); execErr != nil {
+		t.Fatalf("an allowed enum value should be accepted: %v", execErr)
+	}
+	for _, value := range []any{"bing", 1, true, []any{"google"}} {
+		execErr := ValidateSync(manifest(), map[string]any{"platform": value})
+		if execErr == nil || execErr.Code != "invalid_request" || execErr.HTTPStatus != http.StatusBadRequest {
+			t.Fatalf("enum value %#v should be rejected, got %#v", value, execErr)
+		}
+	}
+}
+
 func TestManifestFileIDsAreUnique(t *testing.T) {
 	paths, err := fs.Glob(manifestFS, "manifests/*.json")
 	if err != nil {
@@ -639,8 +675,8 @@ func TestManifestFileIDsAreUnique(t *testing.T) {
 		}
 		ids[manifest.ID] = path
 	}
-	if len(ids) != 22 {
-		t.Fatalf("expected 22 embedded manifests, got %d", len(ids))
+	if len(ids) != 33 {
+		t.Fatalf("expected 33 embedded manifests, got %d", len(ids))
 	}
 }
 
@@ -686,6 +722,15 @@ func TestManifestRejectsUnsafeRequestExtensions(t *testing.T) {
 			minimum := 10.0
 			maximum := 1.0
 			m.Request.Ranges = map[string]RangeSpec{"count": {Min: &minimum, Max: &maximum}}
+		}},
+		{name: "enum without values", mutate: func(m *Manifest) {
+			m.Request.Enums = map[string][]any{"mode": {}}
+		}},
+		{name: "enum with non-scalar value", mutate: func(m *Manifest) {
+			m.Request.Enums = map[string][]any{"mode": {map[string]any{"x": 1}}}
+		}},
+		{name: "enum with empty field name", mutate: func(m *Manifest) {
+			m.Request.Enums = map[string][]any{"": {"a"}}
 		}},
 		{name: "array length without bounds", mutate: func(m *Manifest) {
 			m.Request.ArrayLengths = map[string]RangeSpec{"items": {}}

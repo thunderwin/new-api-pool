@@ -29,6 +29,14 @@
 > `serp-google-v1` 改为 DataForSEO 直连，公共 ID、输入、默认值和输出字段不变；
 > 通用 Manifest 新增 HTTP Basic 鉴权，并支持从响应正文 `quantity_path` 读取成本，
 > 缺失时按 `reserve_usd` 兜底。线上发布状态以本次部署报告为准。
+>
+> **2026-11-19 追加（已实现并离线核实，线上发布以部署记录为准）**：新增 11 个
+> DataForSEO「AI Optimization」直连能力（`ai-answer-*` 四个引擎问答、
+> `ai-answer-scrape-*` 两个网页版抓取、`serp-google-ai-mode-v1`、三个
+> `llm-mentions-*`、`ai-keyword-volume-v1`），全部只写 Manifest，没有新增原生能力；
+> `serp-google-v1` 只做加法，新增可选输入 `load_async_ai_overview`；通用 Manifest
+> 新增 `request.enums` 枚举约束。验收命令
+> `go test ./capability/... ./controller/...` 与 `go build ./...` 均通过。
 
 ## 路由
 
@@ -81,6 +89,7 @@ POST /v1/capabilities/weather-v1
 | `headers` | 常量请求头。拒绝 `Authorization`、`Host`、`Content-Length`、Cookie 和 hop-by-hop 头，也拒绝非法名称和换行注入 |
 | `ranges` | 输入数值约束：`min`、`max`、`integer`。在预扣费和上游调用前校验，不是数字或超出范围返回 `400 invalid_request` |
 | `array_lengths` | 输入数组长度约束：`min`、`max`。在预扣费和上游调用前校验；不是数组或超出范围返回 `400 invalid_request` |
+| `enums` | 输入枚举约束：`{字段: [允许值...]}`。在预扣费和上游调用前校验；值不在列表中（按字符串比较）返回 `400 invalid_request`，未传且无默认值时跳过。Manifest 加载阶段拒绝空字段名、空列表和非标量允许值 |
 
 ### 鉴权
 
@@ -176,6 +185,17 @@ GET /v1/tasks/task_...
 | `keyword-ideas-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 种子词扩展相关关键词 |
 | `keyword-volume-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 关键词搜索量与 12 个月趋势 |
 | `serp-google-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Google 自然搜索 SERP |
+| `ai-answer-chatgpt-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | ChatGPT 问答答案与引用来源 |
+| `ai-answer-claude-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Claude 问答答案与引用来源 |
+| `ai-answer-gemini-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Gemini 问答答案与引用来源 |
+| `ai-answer-perplexity-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Perplexity 问答答案与引用来源 |
+| `ai-answer-scrape-chatgpt-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | ChatGPT 网页版答案抓取 |
+| `ai-answer-scrape-gemini-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Gemini 网页版答案抓取 |
+| `serp-google-ai-mode-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Google AI Mode 答案块与 reference |
+| `llm-mentions-search-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | AI 答案提及的问题级明细 |
+| `llm-mentions-top-domains-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | AI 答案引用最多的域名 |
+| `llm-mentions-top-pages-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | AI 答案引用最多的页面 |
+| `ai-keyword-volume-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | AI 搜索量与 12 个月趋势 |
 | `ai-brand-mentions-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | LLM 品牌提及聚合指标 |
 | `page-seo-audit-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 单页 SEO 审计 |
 | `web-search-v1` | DeepSeek Search | 同步 | $0.001 / 次 | 网页搜索；空结果成功且免费 |
@@ -284,6 +304,116 @@ DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态�
 时基础问题项保留在 `output.result[0].items[]`；当前仍未暴露
 `people_also_ask_click_depth`，不能请求展开追问层级。
 
+### DataForSEO AI Optimization 能力（11 个，2026-11-19）
+
+官方文档和上游价格核实日期：2026-11-19（`docs.dataforseo.com/v3/ai_optimization/...`、
+`docs.dataforseo.com/v3/serp/google/ai_mode/live/advanced/`）。
+
+与上一批直连能力共用同一套契约：基址 `https://api.dataforseo.com/v3`、HTTP Basic
+鉴权（`CAPABILITY_DATAFORSEO_LOGIN` / `CAPABILITY_DATAFORSEO_PASSWORD`）、
+请求包成单元素数组、成功条件 `$.tasks.0.status_code == 20000`、
+`per_unit` + `quantity_path=$.cost` 按成本价结算（缺失 `cost` 时按 `reserve_usd` 兜底）、
+仅 HTTP 429/503 最多再试一次、沿用同一套 `error_map`。
+输出统一为 `result` = `$.tasks.0.result`，即上游结果数组原样返回，不做字段投影。
+
+| ID | 上游端点（`/v3/...`） | 输入 | 单次上限 |
+|---|---|---|---|
+| `ai-answer-chatgpt-v1` | `ai_optimization/chat_gpt/llm_responses/live` | **必填** `prompt`；可选 `model`、`web_search`、`web_search_country_iso_code`、`web_search_city`、`system_message`、`temperature` | $0.20 |
+| `ai-answer-claude-v1` | `ai_optimization/claude/llm_responses/live` | 同 chatgpt（`temperature` 上限 1） | $0.20 |
+| `ai-answer-gemini-v1` | `ai_optimization/gemini/llm_responses/live` | **必填** `prompt`；可选 `model`、`web_search`、`system_message`、`temperature` | $0.10 |
+| `ai-answer-perplexity-v1` | `ai_optimization/perplexity/llm_responses/live` | **必填** `prompt`；可选 `model`、`web_search`、`web_search_country_iso_code`、`system_message`、`temperature`（上限 1.9） | $0.10 |
+| `ai-answer-scrape-chatgpt-v1` | `ai_optimization/chat_gpt/llm_scraper/live/advanced` | **必填** `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`） | $0.01 |
+| `ai-answer-scrape-gemini-v1` | `ai_optimization/gemini/llm_scraper/live/advanced` | 同上 | $0.01 |
+| `serp-google-ai-mode-v1` | `serp/google/ai_mode/live/advanced` | **必填** `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`）、`device`（`desktop`/`mobile`，默认 `desktop`） | $0.01 |
+| `llm-mentions-search-v1` | `ai_optimization/llm_mentions/search/live` | **必填** `target`（1–10 个对象）；可选 `platform`、`location_code`、`language_code`、`limit`（默认 20，最大 100）、`order_by`（≤3 条）、`filters`（≤8 条） | $0.25 |
+| `llm-mentions-top-domains-v1` | `ai_optimization/llm_mentions/top_domains/live` | **必填** `target`；可选 `platform`、`location_code`、`language_code`、`items_list_limit`（默认 5，最大 10）、`links_scope` | $0.25 |
+| `llm-mentions-top-pages-v1` | `ai_optimization/llm_mentions/top_pages/live` | 同 top_domains | $0.25 |
+| `ai-keyword-volume-v1` | `ai_optimization/ai_keyword_data/keywords_search_volume/live` | **必填** `keywords`（1–200 个）；可选 `location_code`（默认 2840）、`language_code`（默认 `en`） | $0.05 |
+
+#### 四个引擎的问答（`ai-answer-*-v1`）
+
+- 输入 `prompt` 映射到上游 `user_prompt`（上游上限 500 字符，超长由上游拒绝）。
+- `model` 映射到上游 `model_name`，默认值分别为 `gpt-6-sol`、`claude-sonnet-5-5`、
+  `gemini-4-argon`、`sonar-pro`；传其他模型名按原样透传。
+- `web_search` 默认 `true`（上游默认 `false`）；关掉后结果通常没有
+  `items[].sections[].annotations[]` 和 `search_results[]`。
+- `web_search_country_iso_code` 默认 `US`（chat_gpt / claude / perplexity）；
+  `web_search_city` 只有 chat_gpt / claude 暴露且无默认值。
+- `temperature` 不设默认值（不传就不发，沿用各引擎上游默认）：chatgpt 0–2、claude 0–1、
+  gemini 0–2、perplexity 0–1.9，均按上游文档；超出范围在预扣费前返回
+  `400 invalid_request`。
+- **不暴露** `max_output_tokens`、`top_p`、`force_web_search`、`use_reasoning`、
+  `message_chain`。实测 chat_gpt 传 `max_output_tokens` 会返回 `40501`（`Invalid Field`），
+  且该系列端点会拒绝未声明的字段，因此也不把这类参数做成默认发送。
+- 引擎差异按上游文档落在各自 Manifest：gemini 的任务字段表没有
+  `web_search_country_iso_code` / `web_search_city`，因此 gemini 不发送这两个字段；
+  perplexity 有 `web_search_country_iso_code`（仅 Sonar 系列生效）但没有
+  `web_search_city`，因此只有国家码。
+- 输出 `result[0]` 关键字段：`items[]`（`type=message` 时是答案分段）、
+  `items[].sections[].annotations[]`（`url`/`title`，chat_gpt 另有
+  `start_index`/`end_index`/`text`，perplexity 可能为 `null`）、`search_results[]`、
+  `fan_out_queries[]`、`input_tokens`/`output_tokens`/`reasoning_tokens`、`money_spent`。
+- 官方文档标注单任务执行时间最长 120 秒，Manifest 总超时设为 `150s`。
+
+#### 网页版抓取（`ai-answer-scrape-*-v1`）
+
+- 模拟消费者网页版（chatgpt.com / Gemini）页面，返回 `markdown`、`sources[]`、
+  `search_results[]`、`fan_out_queries[]`、`brand_entities[]`（含 `title`/`category`）
+  和 `items[]`。
+- 输入只有 `keyword`、`location_code`、`language_code`；`force_web_search` 未暴露。
+- 实测单次 $0.004；官方文档标注最长 120 秒，Manifest 总超时 `150s`。
+
+#### Google AI Mode（`serp-google-ai-mode-v1`）
+
+- 返回 Google AI Mode 结果页：`result[0].items[]` 里 `type=ai_overview` 的对象带
+  `markdown`、`items[]`、`references[]`（`source`/`domain`/`url`/`title`/`text`）。
+- `device` 只接受 `desktop`/`mobile`（`request.enums` 校验），默认 `desktop`。
+- 实测单次 $0.004。
+
+#### LLM Mentions（`llm-mentions-*`）
+
+- `target` 是对象数组，**原样透传**，每项是 `{"domain": "..."}` 或
+  `{"keyword": "..."}`，可带 `search_filter`、`search_scope`、`match_type`
+  （domain 还支持 `include_subdomains`）；Manifest 只用 `array_lengths` 限制 1–10 个
+  实体，不解释每个对象的内容，字段名写错由上游 `40501` 拒绝。
+- `platform` 只接受 `chat_gpt`/`google`（`request.enums`），默认 `chat_gpt`
+  （上游默认是 `google`，这里按调用方偏好改成 chat_gpt）。上游提示 chat_gpt 数据
+  仅覆盖美国/英语，通过 google 平台查询其他地区。
+- `limit` 上游默认 100、最大 1000；这里收紧为默认 20、最大 100，用于控制单次成本。
+- `order_by`（最多 3 条）和 `filters`（最多 8 条）是字符串数组，原样透传，
+  Manifest 只校验数组长度。
+- `items_list_limit` 默认 5、最大 10；`links_scope` 只接受 `sources`/`search_results`。
+- 输出：search 是 `result[0].items[]`（`question`/`answer`/`sources[]`/
+  `search_results[]`/`ai_search_volume`/`monthly_searches[]`）；top_* 是
+  `result[0].total`（按 location/language/platform/sources_domain 等维度的聚合）
+  加 `result[0].items[]`（每项 `key` 加同样的维度数组）。
+- 实测单次约 $0.10；reserve 取 $0.25。
+
+#### AI 关键词搜索量（`ai-keyword-volume-v1`）
+
+- 上游允许 1,000 个关键词；这里收紧为 1–200，默认 `location_code=2840`、
+  `language_code=en`。
+- 输出 `result[0].items[]`：`keyword`、`ai_search_volume`、`ai_monthly_searches[]`
+  （`year`/`month`/`ai_search_volume`）。
+- 实测 2 个关键词约 $0.01；reserve 取 $0.05。
+
+#### `serp-google-v1` 的加法（不改已有语义）
+
+新增可选输入 `load_async_ai_overview`（布尔）。**不声明默认值**，因此不传时字段
+不进入请求体，默认请求体与 2026-11-06 版本完全一致（离线测试用改造前的
+`serp-google-request.json` 逐字比对）；传 `true` 时上游把异步加载的 `ai_overview`
+item（含 `references[]`）也一起返回，额外计 $0.002，仍在 $0.21 reserve 内；
+传 `false` 时按原样发送 `false`（只读缓存的 `ai_overview`）。
+
+#### 实测成本与 reserve 依据
+
+用运营方账号逐个端点实测（2026-11-19）的单次成本：chat_gpt `gpt-6-sol` 联网
+$0.036、claude `claude-sonnet-5-5` 联网 $0.046、gemini `gemini-4-argon` $0.021、
+perplexity `sonar-pro` $0.012；llm_scraper $0.004；ai_mode $0.004；llm_mentions
+search/top_domains/top_pages 约 $0.10；ai_keyword_data 2 个词约 $0.01。
+reserve 在这些实测值上取整并留余量（0.20 / 0.10 / 0.01 / 0.25 / 0.05），
+理由是联网搜索的 `money_spent` 会随引用源和 token 数变动，而 `$.cost` 是上游最终账单。
+
 ### `web-search-v1`（DeepSeek Search，2026-11-04）
 
 官方文档核实日期：2026-11-04。
@@ -361,7 +491,8 @@ AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficien
 
 ### DataForSEO 按响应体成本计价
 
-DataForSEO 三个直连能力的 `billing.quantity_path` 是 `$.cost`，
+DataForSEO 14 个直连能力（3 个关键词/SERP + 11 个 AI Optimization）的
+`billing.quantity_path` 都是 `$.cost`，
 `billing.unit=usd`、`billing.price_usd=1`。返回值就是该次任务实际花费的美元数，
 平台按 1 倍成本价计费。成本缺失时使用 Manifest 的 `reserve_usd`；上限见上面直连能力表。
 

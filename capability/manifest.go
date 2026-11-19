@@ -57,6 +57,7 @@ type RequestSpec struct {
 	Required     []string                `json:"required,omitempty"`
 	Ranges       map[string]RangeSpec    `json:"ranges,omitempty"`
 	ArrayLengths map[string]RangeSpec    `json:"array_lengths,omitempty"`
+	Enums        map[string][]any        `json:"enums,omitempty"`
 	URLInputs    map[string]URLInputSpec `json:"url_inputs,omitempty"`
 }
 
@@ -280,6 +281,19 @@ func (m *Manifest) Validate() error {
 				}
 				if spec.Min != nil && spec.Max != nil && *spec.Min > *spec.Max {
 					return fmt.Errorf("manifest %s: request.ranges.%s.min exceeds max", m.ID, field)
+				}
+			}
+			for field, allowed := range m.Request.Enums {
+				if strings.TrimSpace(field) == "" {
+					return fmt.Errorf("manifest %s: request.enums contains an empty field", m.ID)
+				}
+				if len(allowed) == 0 {
+					return fmt.Errorf("manifest %s: request.enums.%s requires at least one allowed value", m.ID, field)
+				}
+				for _, value := range allowed {
+					if _, ok := StringValue(value); !ok {
+						return fmt.Errorf("manifest %s: request.enums.%s only accepts scalar values", m.ID, field)
+					}
 				}
 			}
 			for field, spec := range m.Request.ArrayLengths {

@@ -52,6 +52,17 @@
   （0–100，取自上游 `keyword_properties`，不额外计费），其余字段不变。
   三个能力的单次 reserve 分别为 $0.04 / $0.04 / $0.21。是否已经发布到线上只能以
   当次运维报告和部署记录为准；仓库代码改动本身不代表已上线。
+- 2026-11-19 已核实：Capability 层共有 **33 个能力**，其中 15 个经 AISA、**14 个直连
+  DataForSEO**、4 个其它供应商（Open-Meteo、SSL Labs、Bright Data、DeepSeek）。
+  本日新增 11 个 DataForSEO「AI Optimization」直连能力（同属 `dataforseo` provider、
+  HTTP Basic 鉴权、单元素数组 body、`$.cost` 按成本价结算）：
+  `ai-answer-chatgpt-v1`、`ai-answer-claude-v1`、`ai-answer-gemini-v1`、
+  `ai-answer-perplexity-v1`、`ai-answer-scrape-chatgpt-v1`、`ai-answer-scrape-gemini-v1`、
+  `serp-google-ai-mode-v1`、`llm-mentions-search-v1`、`llm-mentions-top-domains-v1`、
+  `llm-mentions-top-pages-v1`、`ai-keyword-volume-v1`；`serp-google-v1` 只做加法，
+  新增可选输入 `load_async_ai_overview`（不传时不发送该字段，上游默认 `false`）。
+  这 11 个能力**已实现并离线核实**（`go test ./capability/... ./controller/...`），
+  线上是否已发布同样以部署记录为准。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -374,6 +385,18 @@ GET  /v1/tasks/{id}/content          # 文件/二进制
 - 同步 `per_unit` 的 `quantity_path` 缺失或非法时，如果声明了 `reserve_usd`，按 reserve
   结算并记 `usage_source=reserve_fallback`，与数量头兜底语义一致。
 
+2026-11-19 新增的 Manifest 通用能力：
+
+- `request.enums`：`{输入字段: [允许值...]}` 的枚举约束。在预扣费和上游调用之前校验，
+  值不在列表（按字符串比较）返回 `400 invalid_request`；未传且无默认值时跳过校验。
+  Manifest 加载阶段拒绝空字段名、空允许值列表和非标量允许值。
+- 已接入 11 个 DataForSEO「AI Optimization」能力，全部只写 Manifest，没有新增 Go 能力。
+  其中 `llm-mentions-*` 的 `target` 是对象数组，直接按输入原样透传，只用
+  `array_lengths` 限制 1–10 个实体；引擎差异（模型、temperature 上限、是否支持
+  `web_search_country_iso_code`）也落在各自 Manifest 里，没有写供应商特判。
+- `serp-google-v1` 新增可选输入 `load_async_ai_overview`：未传时不进入请求体，
+  因此默认请求体与改动前完全一致；传 `true` 时上游额外收 $0.002，仍在 $0.21 reserve 内。
+
 ---
 
 ## 5. Manifest 示例
@@ -527,9 +550,12 @@ limits:
 | 日志 | `logs` + capability/provider/usage 字段 |
 
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
-> （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、3 个
-> DataForSEO 直连关键词能力和 `web-search-v1`（DeepSeek Search，同步）已接入。
+> （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、14 个
+> DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）和
+> `web-search-v1`（DeepSeek Search，同步）已接入，编码后共 33 个能力。
 > `weather-v1` 与 `ssl-analyze-v1` 是免费试点；AISA 按上游实际成本结算；
-> DataForSEO 关键词能力按响应正文 `cost` 结算；
+> DataForSEO 直连能力按响应正文 `cost` 结算；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
+> 11 个 AI Optimization 能力已实现并在离线测试中核实（2026-11-19），
+> 线上发布状态以部署记录为准。
 > 多供应商路由、后台 Manifest 编辑、SSE 流式仍在 Phase 2/3。

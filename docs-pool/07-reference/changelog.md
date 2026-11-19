@@ -13,6 +13,53 @@
 
 ---
 
+## v0.6.12 — DataForSEO AI Optimization 能力（2026-11-19）
+
+> 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、
+> `go build ./...` 均通过）；未部署，线上发布状态以部署记录为准。
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 新增 11 个 DataForSEO「AI Optimization」直连同步能力，全部只写 Manifest，没有新增原生能力 |
+| `+` | 四个引擎的问答：`ai-answer-chatgpt-v1`、`ai-answer-claude-v1`、`ai-answer-gemini-v1`、`ai-answer-perplexity-v1`（`llm_responses/live`，reserve $0.20 / $0.20 / $0.10 / $0.10） |
+| `+` | 两个网页版抓取：`ai-answer-scrape-chatgpt-v1`、`ai-answer-scrape-gemini-v1`（`llm_scraper/live/advanced`，reserve $0.01） |
+| `+` | Google AI Mode：`serp-google-ai-mode-v1`（`serp/google/ai_mode/live/advanced`，reserve $0.01） |
+| `+` | LLM Mentions：`llm-mentions-search-v1`、`llm-mentions-top-domains-v1`、`llm-mentions-top-pages-v1`（reserve $0.25） |
+| `+` | AI 关键词搜索量：`ai-keyword-volume-v1`（reserve $0.05） |
+| `+` | 通用 Manifest 新增 `request.enums` 枚举约束，在预扣费前校验，值不在列表返回 `400 invalid_request` |
+| `+` | `serp-google-v1` 新增可选输入 `load_async_ai_overview`（不传时不发送，默认请求体与改动前逐字一致） |
+| `*` | 嵌入 Manifest 总数 22 → 33；`go` 代码只改了 `capability/manifest.go` 和 `capability/executor.go` 的通用枚举校验，没有供应商特判 |
+
+**原因**：ericBot 的「AI 可见性」功能需要把同一个买家问题去问 ChatGPT / Claude /
+Gemini / Perplexity，并看答案里是否提到客户品牌、引用了哪些来源。这类需求本质上是
+四个「问答能力」加三个「提及聚合能力」，完全可以用现有 Manifest DSL 表达，
+不应该为供应商新增 Go 能力。
+
+**输入与输出**：11 个能力的输出统一为 `result` = `$.tasks.0.result`（上游结果数组
+原样返回）；计费统一为 `per_unit` + `quantity_path=$.cost`，缺失 `cost` 时按
+`reserve_usd` 兜底（日志 `usage_source=reserve_fallback`）。
+
+**关键取舍**：
+
+- `max_output_tokens` 在 chat_gpt 上实测返回 `40501 Invalid Field`，且该系列端点会拒绝
+  未声明字段，所以四个问答能力都不暴露它，也不设成默认发送。
+- 引擎差异落在各自 Manifest：gemini 的任务字段表没有
+  `web_search_country_iso_code` / `web_search_city`，所以 gemini 不发这两个字段；
+  perplexity 只有国家码。
+- `llm-mentions-*` 的 `limit` 上游默认 100、最大 1000，这里收紧为默认 20、最大 100 以
+  控制单次成本；`target` 对象数组原样透传，只用 `array_lengths` 限制 1–10 个实体。
+- reserve 基于 2026-11-19 实测单次成本取整（chatgpt $0.036、claude $0.046、
+  gemini $0.021、perplexity $0.012、scraper/ai_mode $0.004、mentions ≈$0.10、
+  ai keyword volume ≈$0.01）。
+
+**测试**：每个新能力都覆盖成功（请求体与输出黄金样例）、上游任务级 `40501` →
+`400 invalid_request`、`40200` 余额 → `503 upstream_unavailable`、HTTP 5xx →
+`503 upstream_unavailable`、缺必填 → `400 invalid_request`、`cost` 缺失 → 按 reserve
+结算、`cost` 存在 → 按成本结算；另有 `serp-google-v1` 默认请求体不变、
+`request.enums` 校验、嵌入 Manifest 数量与目录 `max_usd` 的断言。
+
+---
+
 ## v0.6.11 — Wokey 上 Claude 缓存读写计费修复（2026-11-17）
 
 > 2026-11-17 10:18Z 已部署到生产，同时把 Claude 的 `CreateCacheRatio` 改为 5 分钟写价 1.25；

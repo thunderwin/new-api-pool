@@ -153,6 +153,26 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 				}
 			}
 		}
+		for field, allowed := range m.Request.Enums {
+			value, ok := inputValueOrDefault(m.Request.Defaults, input, field)
+			if !ok {
+				continue
+			}
+			matched := false
+			for _, expected := range allowed {
+				if responseValuesEqual(value, expected) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return &ExecutionError{
+					Code:       "invalid_request",
+					Message:    "an input value is not one of the allowed values",
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
 		for field, spec := range m.Request.URLInputs {
 			value, ok := input[field]
 			if !ok || validateURLInputValue(value, spec.AllowedHosts) != nil {

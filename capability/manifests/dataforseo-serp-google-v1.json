@@ -2,7 +2,7 @@
   "id": "serp-google-v1",
   "provider": "dataforseo",
   "mode": "sync",
-  "description": "Returns advanced Google organic SERP results for a keyword; key inputs are keyword, location, language, device, and depth; billed at DataForSEO cost, up to $0.21 per call.",
+  "description": "Returns advanced Google organic SERP results for a keyword; key inputs are keyword, location, language, device, and depth; optional load_async_ai_overview (default false) also returns asynchronously loaded ai_overview items for an extra $0.002; billed at DataForSEO cost, up to $0.21 per call.",
   "endpoint": "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
   "method": "POST",
   "auth": {
@@ -20,7 +20,8 @@
       "device": "$.input.device",
       "depth": "$.input.depth",
       "os": "$.input.os",
-      "calculate_rectangles": "$.input.calculate_rectangles"
+      "calculate_rectangles": "$.input.calculate_rectangles",
+      "load_async_ai_overview": "$.input.load_async_ai_overview"
     },
     "defaults": {
       "location_code": 2840,

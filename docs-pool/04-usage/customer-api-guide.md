@@ -298,7 +298,7 @@ curl https://api.tokwork.com/v1/capabilities \
 - `mode`：`sync`（同步，一次请求拿结果）或 `async`（异步，提交后轮询）。**调用方式由它决定**。
 - `billing`：计费方式与单价（美元）。
 
-当前能力目录（2026-11-06 代码核实；线上发布状态以部署报告为准）：
+当前能力目录（2026-11-19 代码核实；线上发布状态以部署报告为准）：
 
 | ID | 模式 | 输入 | 输出 | 单价 |
 |---|---|---|---|---|
@@ -333,7 +333,23 @@ DataForSEO 直连关键词能力（按响应正文 `cost` 成本价结算）：
 |---|---|---|---|
 | `keyword-ideas-v1` | 种子词扩展相关关键词 | `keywords`（1–20 个）、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.04 |
 | `keyword-volume-v1` | 关键词搜索量与 12 个月趋势 | `keywords`（1–200 个）、`location_name`、`language_code` | $0.04 |
-| `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth` | $0.21 |
+| `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth`、`load_async_ai_overview`（默认 false，开启后额外 $0.002） | $0.21 |
+
+AI 可见性能力（11 个，DataForSEO AI Optimization 直连，同样按响应正文 `cost` 成本价结算）：
+
+| ID | 用途 | 关键输入 | 单次上限 |
+|---|---|---|---|
+| `ai-answer-chatgpt-v1` | 问 ChatGPT 一个买家问题，拿答案与引用来源 | **必填** `prompt`；可选 `model`（默认 `gpt-6-sol`）、`web_search`（默认 true）、`web_search_country_iso_code`（默认 `US`）、`web_search_city`、`system_message`、`temperature`（0–2） | $0.20 |
+| `ai-answer-claude-v1` | 同上，Claude 引擎 | 同上，`model` 默认 `claude-sonnet-5-5`，`temperature` 0–1 | $0.20 |
+| `ai-answer-gemini-v1` | 同上，Gemini 引擎 | **必填** `prompt`；可选 `model`（默认 `gemini-4-argon`）、`web_search`、`system_message`、`temperature`（0–2） | $0.10 |
+| `ai-answer-perplexity-v1` | 同上，Perplexity 引擎 | **必填** `prompt`；可选 `model`（默认 `sonar-pro`）、`web_search`、`web_search_country_iso_code`（默认 `US`）、`system_message`、`temperature`（0–1.9） | $0.10 |
+| `ai-answer-scrape-chatgpt-v1` | 模拟消费者网页版，抓 ChatGPT 的答案页面 | **必填** `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`） | $0.01 |
+| `ai-answer-scrape-gemini-v1` | 同上，Gemini 网页版 | 同上 | $0.01 |
+| `serp-google-ai-mode-v1` | Google AI Mode 的答案块与引用 | **必填** `keyword`；可选 `location_code`、`language_code`、`device`（`desktop`/`mobile`） | $0.01 |
+| `llm-mentions-search-v1` | 查哪些 AI 提问提到了某域名/关键词 | **必填** `target`（1–10 个对象）、可选 `platform`、地区、语言、`limit`（默认 20，最大 100）、`order_by`、`filters` | $0.25 |
+| `llm-mentions-top-domains-v1` | AI 答案里被引用最多的域名 | **必填** `target`、可选 `platform`、地区、语言、`items_list_limit`（默认 5，最大 10）、`links_scope` | $0.25 |
+| `llm-mentions-top-pages-v1` | AI 答案里被引用最多的页面 | 同 top-domains | $0.25 |
+| `ai-keyword-volume-v1` | AI 搜索量与 12 个月趋势 | **必填** `keywords`（1–200 个）、可选 地区、语言 | $0.05 |
 
 原有 AISA 能力的地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
 `keyword-ideas-v1` 和 `keyword-volume-v1` 使用 `location_name`，默认
@@ -509,6 +525,100 @@ curl https://api.tokwork.com/v1/capabilities/keyword-volume-v1 \
   （如 `LOW`、`MEDIUM`、`HIGH`）。
 - 两个关键词能力单次上限都是 $0.04；实际费用按响应体 `cost` 结算。缺少 `cost` 时
   按单次上限兜底，并在内部日志标记 `reserve_fallback`。
+
+**AI 可见性示例**（`ai-answer-chatgpt-v1`）：
+
+同一个买家问题去问不同引擎，看答案里有没有提到自己的品牌、引用了哪些来源：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/ai-answer-chatgpt-v1 \
+  -H "Authorization: Bearer sk-REPLACE_ME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "prompt": "best wooden toys for toddlers",
+      "web_search": true,
+      "web_search_country_iso_code": "US"
+    }
+  }'
+```
+
+```json
+{
+  "success": true,
+  "capability": "ai-answer-chatgpt-v1",
+  "output": {
+    "result": [
+      {
+        "model_name": "gpt-6-sol",
+        "web_search": true,
+        "money_spent": 0.035524,
+        "items": [
+          {
+            "type": "message",
+            "sections": [
+              {
+                "type": "text",
+                "text": "Here are a few wooden toy sets worth considering...",
+                "annotations": [
+                  {
+                    "title": "Wooden toy guide",
+                    "url": "https://example.com/wooden-toys"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "search_results": [
+          { "title": "Wooden toy guide", "url": "https://example.com/wooden-toys" }
+        ],
+        "fan_out_queries": ["best wooden toys for 2 year olds"]
+      }
+    ]
+  },
+  "usage": { "unit": "usd", "quantity": 0.036124 },
+  "cost_usd": 0.036124
+}
+```
+
+- 四个引擎各一个 ID：`ai-answer-chatgpt-v1`、`ai-answer-claude-v1`、
+  `ai-answer-gemini-v1`、`ai-answer-perplexity-v1`，输入、输出结构一致，
+  只是默认 `model`、`temperature` 范围和是否支持 `web_search_country_iso_code` 不同。
+- `output.result[0].items[].sections[].annotations[]` 是答案里引用的来源
+  （`url`/`title`）；`search_results[]` 是模型检索到的网页；`fan_out_queries[]` 是它
+  拆出的子问题。检索品牌名、域名是否出现在 `annotations` 或答案正文里，就能算
+  「AI 有没有提到我」。
+- `web_search` 默认 `true`；关掉后通常没有 `annotations` 和 `search_results`。
+  不传 `temperature` 就用上游默认值，传了必须是 0–2（claude 0–1，perplexity 0–1.9）
+  之间的数字。
+- 不支持 `max_output_tokens`、`top_p`：这些参数未在能力里暴露，传了也不会发给上游。
+- `ai-answer-scrape-chatgpt-v1` / `ai-answer-scrape-gemini-v1` 是另一个角度：
+  模拟消费者网页版，返回 `markdown`、`sources[]`、`search_results[]`、
+  `brand_entities[]`，输入只要 `keyword`。
+
+**LLM Mentions 示例**（`llm-mentions-search-v1`）：
+
+```bash
+curl https://api.tokwork.com/v1/capabilities/llm-mentions-search-v1 \
+  -H "Authorization: Bearer sk-REPLACE_ME" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "target": [{ "domain": "example.com" }],
+      "platform": "chat_gpt",
+      "limit": 20
+    }
+  }'
+```
+
+- `target` 必须是**对象数组**（1–10 个），每项写 `{ "domain": "example.com" }` 或
+  `{ "keyword": "wooden toys" }`，可带 `search_filter`、`search_scope`；
+  这些对象原样透传给上游，字段名写错会被上游拒绝（`400 invalid_request`）。
+- `platform` 只接受 `chat_gpt`（默认）或 `google`；上游提示 chat_gpt 数据只覆盖美国和英语。
+- `limit` 默认 20、最大 100；`order_by` 最多 3 条、`filters` 最多 8 条。
+- `llm-mentions-top-domains-v1` / `llm-mentions-top-pages-v1` 把 `limit` 换成
+  `items_list_limit`（默认 5，最大 10）和 `links_scope`（`sources`/`search_results`）。
 
 **外链汇总示例**（`backlinks-summary-v1`）：
 

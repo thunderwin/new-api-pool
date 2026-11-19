@@ -364,13 +364,26 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	for _, item := range response.Data {
 		entries[item.ID] = item.Billing.MaxUSD
 	}
-	if len(entries) != 22 {
-		t.Fatalf("expected 22 directory entries, got %d", len(entries))
+	if len(entries) != 33 {
+		t.Fatalf("expected 33 directory entries, got %d", len(entries))
 	}
 	if entries["keyword-ideas-v1"] != 0.04 ||
 		entries["keyword-volume-v1"] != 0.04 ||
 		entries["serp-google-v1"] != 0.21 {
 		t.Fatalf("keyword capabilities have unexpected max_usd: %#v", entries)
+	}
+	if entries["ai-answer-chatgpt-v1"] != 0.20 ||
+		entries["ai-answer-claude-v1"] != 0.20 ||
+		entries["ai-answer-gemini-v1"] != 0.10 ||
+		entries["ai-answer-perplexity-v1"] != 0.10 ||
+		entries["ai-answer-scrape-chatgpt-v1"] != 0.01 ||
+		entries["ai-answer-scrape-gemini-v1"] != 0.01 ||
+		entries["serp-google-ai-mode-v1"] != 0.01 ||
+		entries["llm-mentions-search-v1"] != 0.25 ||
+		entries["llm-mentions-top-domains-v1"] != 0.25 ||
+		entries["llm-mentions-top-pages-v1"] != 0.25 ||
+		entries["ai-keyword-volume-v1"] != 0.05 {
+		t.Fatalf("AI optimization capabilities have unexpected max_usd: %#v", entries)
 	}
 	for _, id := range []string{
 		"weather-v1",
