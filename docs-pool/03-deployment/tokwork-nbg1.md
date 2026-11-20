@@ -602,6 +602,24 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 线上冒烟 | 经下游客户网关调用：目录 37 个；grok（带 `url_citation`）约 $0.046、kimi 约 $0.008、doubao（不联网）约 $0.001，均成功 |
 | 回滚 | 未触发 |
 
+#### 2026-11-20 GEO 体检分开判定搜索、用户触发访问和训练
+
+> 以下为已核实事实。只换二进制；部署脚本未改 compose 与 `.env`（changelog v0.6.16）。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `5e0cdbe5` |
+| 开始时间 | `2026-11-20T00:48:15Z`（备份） |
+| 新容器启动 | `2026-11-20T00:48:20Z` |
+| 重建窗口 | `00:48:20Z` → `00:48:26Z`（healthy），约 6 秒 |
+| 部署前二进制 | SHA-256 前缀 `2bd0e6b5dd34`，与上一条记录一致 |
+| 二进制 SHA-256 | `e921d0cf33455d81c16a06ae8e09fe935d5c2bfda0bb6c45dfa7d1228dc6d323` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| 回滚备份 | `new-api.bak-20261120-004815` |
+| 健康 | `new-api-app` healthy；新容器日志无 panic/fatal |
+| 线上冒烟 | 经下游客户网关调用 `geo-site-audit-v1` 两次：无 robots.txt 的公开示例站，搜索、用户触发访问、6 个 UA 探测均 `pass`；禁止多家 AI 爬虫的公开新闻站，搜索项 `fail` 并带引擎名，`robots_user_fetch` 因 Claude-User 被禁报 `warn`，浏览器 UA 也被挡时 UA 探测报 `info` |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。

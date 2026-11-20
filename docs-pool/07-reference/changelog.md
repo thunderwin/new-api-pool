@@ -15,8 +15,8 @@
 
 ## v0.6.16 — GEO 体检分开判定搜索、用户触发访问和训练（2026-11-20）
 
-> 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、`gofmt -l capability` 通过）。
-> 部署状态以部署记录 8.1 节为准。
+> 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、`gofmt -l capability` 通过）；
+> **已部署** 2026-11-20 00:48Z（提交 `5e0cdbe5`），见部署记录 8.1 节。
 
 | 类型 | 变更 |
 |---|---|
