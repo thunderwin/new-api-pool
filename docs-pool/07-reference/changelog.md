@@ -18,7 +18,9 @@
 > 状态：**已实现并离线核实**（`gofmt -l relay/channel/claude`、`go vet ./relay/channel/claude/ ./dto/`、
 > `go test -run AutoCache ./relay/channel/claude/`、`go test ./relay/channel/claude/ ./dto/ ./relay/common/`、
 > `go build ./...` 通过；`relay/channel/claude` 的 3 个 `TestRequestOpenAI2ClaudeMessage_*`
-> 是改动前就失败的基线，与本版本无关）；**未部署**。
+> 是改动前就失败的基线，与本版本无关）。**2026-11-20 已部署**（见 `03-deployment/tokwork-nbg1.md` §8.1），
+> 开关只在测试渠道 `wokey-claude`（id 3）打开过；实测后该渠道已**禁用**，线上 Claude 仍走 OpenAI 类型的
+> `wokey` 渠道（id 2），**没有切换**。原因见 ADR-0011「实测结果」。
 
 | 类型 | 变更 |
 |---|---|

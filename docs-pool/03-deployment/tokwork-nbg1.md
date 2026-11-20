@@ -620,6 +620,27 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 线上冒烟 | 经下游客户网关调用 `geo-site-audit-v1` 两次：无 robots.txt 的公开示例站，搜索、用户触发访问、6 个 UA 探测均 `pass`；禁止多家 AI 爬虫的公开新闻站，搜索项 `fail` 并带引擎名，`robots_user_fetch` 因 Claude-User 被禁报 `warn`，浏览器 UA 也被挡时 UA 探测报 `info` |
 | 回滚 | 未触发 |
 
+#### 2026-11-20 Claude 自动缓存断点（已部署，测试渠道已禁用）
+
+> 以下为已核实事实。只换二进制；compose 与 `.env` 未改（changelog v0.6.17，ADR-0011）。
+> 开关默认关闭，只在测试渠道打开过；线上 Claude 路由没有变化。
+
+| 项 | 值 |
+|---|---|
+| 发布提交 | `ad733c2c` |
+| 部署前核对 | 服务器二进制与 compose 的 SHA-256 前缀分别为 `e921d0cf3345`、`03ce86253474`，与上一条记录一致 |
+| 开始时间 | `2026-11-20T10:51:19Z`（备份） |
+| 重建窗口 | `10:51:25Z` → `10:51:30Z`（healthy），约 5 秒 |
+| 二进制 SHA-256 | `4eab8215b29fd019ac239d4cab1438b96cb3ddfcb3ffc689475c082f367d027d` |
+| 容器内 `/new-api` SHA-256 | 与上传二进制相同 |
+| compose / `.env` | 与备份逐字节相同 |
+| 回滚备份 | `new-api.bak-20261120-105119`、`docker-compose.yml.bak-20261120-105119`、`.env.bak-20261120-105119` |
+| 健康 | `new-api-app` healthy；`/api/status` 返回 200；新容器日志无 panic/fatal |
+| 测试渠道 | 直接改库新增 `wokey-claude`（id 3，type 14，上游 Wokey，key 在服务器上从 `wokey` 渠道复制、不出服务器），12 个 Claude 模型，priority 0（不会被自动选中），设置 `claude_auto_cache_control: true`，`param_override` 删除 `thinking`。改前备份 `channels-abilities.bak-20261120-105210.sql` |
+| 实测 | 同一段建站 agent 会话分别指定 id 3 和 id 2 跑，结果见 ADR-0011「实测结果」：id 3 两次上游拒答（各收 $0.10 违规费）且缓存命中不稳定，id 2 无异常且更便宜。全部测试花费约 $0.42（含 $0.20 违规费） |
+| 收尾 | `2026-11-20T11:05Z` 禁用 id 3（`status=2`，12 行 abilities `enabled=false`）。改前备份 `channels-abilities.bak-20261120-110524.sql`。线上 Claude 仍只走 id 2 |
+| 回滚 | 未触发；需要时换回 `new-api.bak-20261120-105119` 即可，开关关闭时新二进制行为与旧版一致 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
