@@ -694,7 +694,7 @@ curl https://api.tokwork.com/v1/capabilities/geo-site-audit-v1 \
         "source": "official",
         "scope": "site",
         "status": "pass",
-        "evidence": "9 AI search/retrieval crawlers allowed on 2 audited paths",
+        "evidence": "6 AI search crawlers allowed on 2 audited paths",
         "reference": "https://www.rfc-editor.org/rfc/rfc9309"
       }
     ],
@@ -719,8 +719,13 @@ curl https://api.tokwork.com/v1/capabilities/geo-site-audit-v1 \
 - `pages[].error` 只在单页抓取失败时出现（`blocked` / `unreachable` / `timeout` /
   `response_too_large` / `http_<状态码>`）。单个页面失败不会让整次调用失败；
   只有首页抓不到才返回错误。
+- 三件事分开检查：`robots_ai_search_access` 只看 AI 搜索爬虫（能不能出现在 AI 搜索里）；
+  `robots_user_fetch` 看 ChatGPT-User、Perplexity-User、Claude-User（用户能不能让 AI 打开网页，
+  OpenAI 和 Perplexity 说 robots.txt 对这类抓取可能不适用，只被它们禁止时给 `info`）；
+  `robots_training_policy` 看训练爬虫。
 - `ai_ua_reachability` 只用各家公开的 User-Agent 请求首页，**只能测 UA 层**，
-  不能验证基于 IP / 反向 DNS 的 verified-bot 规则。
+  不能验证基于 IP / 反向 DNS 的 verified-bot 规则；被拒时给 `warn`「疑似拦截」，
+  因为防火墙可能拦下伪装的 UA 却放行真爬虫。不探测训练爬虫。
 - 不执行 JavaScript；`llms.txt` 只报告是否存在，不计分。
 - 单请求 15 秒，整次调用最多 90 秒；单页响应上限 3 MiB。
 

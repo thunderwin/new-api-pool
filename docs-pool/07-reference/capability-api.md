@@ -560,10 +560,11 @@ Manifest 校验之后按 `native` 字段分发到进程内处理器；预扣/结
 
 | 检查 ID | 类别 | 来源 | 说明 |
 |---|---|---|---|
-| `robots_ai_search_access` | crawl | official | 9 个 AI 搜索/检索爬虫（OAI-SearchBot、ChatGPT-User、PerplexityBot、Perplexity-User、Claude-SearchBot、Claude-User、Googlebot、Bingbot、Applebot）在首页和每个被测路径是否被 robots.txt 放行；被禁 `fail` |
+| `robots_ai_search_access` | crawl | official | 6 个 AI 搜索爬虫（OAI-SearchBot、PerplexityBot、Claude-SearchBot、Googlebot、Bingbot、Applebot）在首页和每个被测路径是否被 robots.txt 放行；被禁 `fail`，证据按「引擎 爬虫 路径 -> 命中规则」列出。训练爬虫和用户触发的抓取不影响这一项 |
+| `robots_user_fetch` | crawl | official | 用户让 AI 打开网页时用的 ChatGPT-User、Perplexity-User、Claude-User 是否被 robots.txt 禁止。Claude-User 被禁 → `warn`（Anthropic 说遵守 robots.txt）；只有 ChatGPT-User / Perplexity-User 被禁 → `info`（OpenAI、Perplexity 说 robots.txt 对用户触发的抓取可能不适用）；都放行 `pass` |
 | `robots_training_policy` | crawl | official | GPTBot、ClaudeBot、Google-Extended、Applebot-Extended、CCBot、meta-externalagent 与 `training_policy` 是否一致；不一致 `warn`，`any` 为 `info` |
 | `robots_deprecated_tokens` | crawl | official | 出现已废弃的 `anthropic-ai` / `Claude-Web` token → `warn`（无效规则） |
-| `ai_ua_reachability` | crawl | official | 8 个 AI UA 与浏览器 UA 各 GET 首页一次；浏览器 200 而 AI UA 被拒/挑战 → `fail`。只代表 User-Agent 层 |
+| `ai_ua_reachability` | crawl | official | 6 个 AI UA（OAI-SearchBot、ChatGPT-User、PerplexityBot、Claude-SearchBot、Googlebot、Bingbot）与浏览器 UA 各 GET 首页一次；浏览器 200 而 AI UA 被拒/挑战 → `warn`「疑似拦截」，要用 CDN/防火墙的拦截记录或服务器访问日志确认真实爬虫是否受影响。只代表 User-Agent 层：防火墙可能拦下伪装 UA 却放行真爬虫。不探测训练爬虫 |
 | `sitemap_discovery` | crawl | official | robots `Sitemap:` 或 `/sitemap.xml`；不存在 → `warn`；lastmod 覆盖率写入证据；所有 lastmod 完全相同或最新 >180 天 → `warn` |
 | `llms_txt` | crawl | industry | `/llms.txt` 是否存在；始终 `info`，并注明主流 AI 搜索不读取它 |
 | `entity_consistency` | entity | industry | 各页 Organization/LocalBusiness 的 name、telephone、address 是否一致 |

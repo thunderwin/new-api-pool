@@ -13,6 +13,20 @@
 
 ---
 
+## v0.6.16 — GEO 体检分开判定搜索、用户触发访问和训练（2026-11-20）
+
+> 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、`gofmt -l capability` 通过）。
+> 部署状态以部署记录 8.1 节为准。
+
+| 类型 | 变更 |
+|---|---|
+| `🐛` | `robots_ai_search_access` 不再包含 ChatGPT-User、Perplexity-User、Claude-User；只禁止这些用户触发的抓取时，搜索项不再 `fail`。证据前加引擎名（如 `Perplexity PerplexityBot /products/x -> Disallow: /products/`） |
+| `+` | 新检查 `robots_user_fetch`（official）：Claude-User 被禁 `warn`；只有 ChatGPT-User / Perplexity-User 被禁 `info`，因为两家官方文档说 robots.txt 对用户触发的抓取可能不适用 |
+| `🐛` | `ai_ua_reachability` 不再探测 GPTBot、ClaudeBot（训练爬虫），防火墙挡训练爬虫不再报失败；AI UA 被拒从 `fail` 改为 `warn`「疑似拦截」，因为探测只伪装 UA，防火墙可能拦伪装请求却放行真爬虫 |
+| `*` | 输入、输出结构、`training_policy` 默认值（`allow`）、计费不变；能力数量仍为 37 |
+
+---
+
 ## v0.6.15 — 修正豆包问答为模型记忆问答、grok reserve 上调（2026-11-19）
 
 > 状态：**已实现并离线核实**（`go test -count=1 ./capability/... ./controller/...`、

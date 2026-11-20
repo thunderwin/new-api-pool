@@ -180,6 +180,58 @@ func TestGeoTrainingPolicyCheck(t *testing.T) {
 	}
 }
 
+func TestGeoRobotsUserFetch(t *testing.T) {
+	audit := &geoAudit{
+		input: geoAuditInput{URL: "https://geo.test/"},
+		home:  &geoPage{URL: "https://geo.test/"},
+	}
+	for _, test := range []struct {
+		body   string
+		status string
+		want   string
+	}{
+		{"User-agent: *\nDisallow:\n", geoStatusPass, "3 user-initiated"},
+		{"User-agent: *\nDisallow:\n\nUser-agent: Perplexity-User\nDisallow: /\n", geoStatusInfo, "Perplexity Perplexity-User / -> Disallow: /"},
+		{"User-agent: *\nDisallow:\n\nUser-agent: Claude-User\nUser-agent: ChatGPT-User\nDisallow: /\n", geoStatusWarn, "Claude Claude-User"},
+	} {
+		audit.robots = parseGeoRobots(test.body)
+		status, evidence := checkRobotsUserFetch(audit)
+		if status != test.status || !strings.Contains(evidence, test.want) {
+			t.Fatalf("%q: got %s (%s), want %s containing %q", test.body, status, evidence, test.status, test.want)
+		}
+	}
+	audit.robots = &geoRobotsFile{}
+	if status, _ := checkRobotsUserFetch(audit); status != geoStatusPass {
+		t.Fatalf("missing robots.txt must pass, got %s", status)
+	}
+	audit.robots = &geoRobotsFile{Err: "http_503"}
+	if status, _ := checkRobotsUserFetch(audit); status != geoStatusInfo {
+		t.Fatalf("unreadable robots.txt must be info, got %s", status)
+	}
+}
+
+func TestGeoUserAgentReachability(t *testing.T) {
+	for _, bot := range geoProbeBots {
+		for _, training := range geoTrainingRobots {
+			if bot.Token == training.Token {
+				t.Fatalf("training crawler %s must not be probed", bot.Token)
+			}
+		}
+	}
+	audit := &geoAudit{probe: &geoUAProbeResult{
+		BrowserStatus: http.StatusOK,
+		Bots:          []geoUABotResult{{Token: "OAI-SearchBot", Status: http.StatusOK}, {Token: "PerplexityBot", Status: http.StatusForbidden, Challenge: true}},
+	}}
+	status, evidence := checkAIUserAgentReachability(audit)
+	if status != geoStatusWarn || !strings.Contains(evidence, "suspected block") || !strings.Contains(evidence, "PerplexityBot=403") {
+		t.Fatalf("a rejected spoofed UA should be a suspected block, got %s (%s)", status, evidence)
+	}
+	audit.probe.Bots[1] = geoUABotResult{Token: "PerplexityBot", Status: http.StatusOK}
+	if status, evidence := checkAIUserAgentReachability(audit); status != geoStatusPass {
+		t.Fatalf("all probes reachable should pass, got %s (%s)", status, evidence)
+	}
+}
+
 func TestGeoRobotsAISearchAccess(t *testing.T) {
 	audit := &geoAudit{
 		input:  geoAuditInput{URL: "https://geo.test/"},
@@ -189,6 +241,27 @@ func TestGeoRobotsAISearchAccess(t *testing.T) {
 	status, evidence := checkRobotsAISearchAccess(audit)
 	if status != geoStatusFail || !strings.Contains(evidence, "PerplexityBot") {
 		t.Fatalf("expected PerplexityBot failure, got %s (%s)", status, evidence)
+	}
+
+	// A search crawler blocked on product pages names the engine and the page.
+	audit.pages = []*geoPage{{URL: "https://geo.test/products/lamp"}}
+	audit.robots = parseGeoRobots("User-agent: *\nDisallow:\n\nUser-agent: PerplexityBot\nDisallow: /products/\n")
+	status, evidence = checkRobotsAISearchAccess(audit)
+	if status != geoStatusFail || !strings.Contains(evidence, "Perplexity PerplexityBot /products/lamp") || strings.Contains(evidence, " / ->") {
+		t.Fatalf("expected a Perplexity product-page failure, got %s (%s)", status, evidence)
+	}
+	audit.pages = nil
+
+	// Training and user-initiated fetchers do not decide search visibility.
+	for _, body := range []string{
+		"User-agent: *\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n",
+		"User-agent: *\nDisallow:\n\nUser-agent: Perplexity-User\nDisallow: /\n",
+		"User-agent: *\nDisallow:\n\nUser-agent: ChatGPT-User\nUser-agent: Claude-User\nDisallow: /\n",
+	} {
+		audit.robots = parseGeoRobots(body)
+		if status, evidence := checkRobotsAISearchAccess(audit); status != geoStatusPass {
+			t.Fatalf("search access should pass for %q, got %s (%s)", body, status, evidence)
+		}
 	}
 
 	audit.robots = parseGeoRobots("User-agent: *\nDisallow:\n")
@@ -715,7 +788,7 @@ func TestGeoCanonicalComparableIgnoresFragment(t *testing.T) {
 func TestGeoAuditExecuteSyncEndToEnd(t *testing.T) {
 	network := newGeoTestNetwork(t)
 	network.serve(t, "geo.test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if userAgent := r.Header.Get("User-Agent"); strings.Contains(userAgent, "ClaudeBot/") {
+		if userAgent := r.Header.Get("User-Agent"); strings.Contains(userAgent, "GPTBot/") {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte("<html><title>Attention Required! | Cloudflare</title></html>"))
 			return
@@ -796,8 +869,11 @@ func TestGeoAuditExecuteSyncEndToEnd(t *testing.T) {
 	if statuses["robots_deprecated_tokens|"] != geoStatusWarn {
 		t.Fatalf("deprecated token should warn, got %v", statuses["robots_deprecated_tokens|"])
 	}
-	if statuses["ai_ua_reachability|"] != geoStatusFail {
-		t.Fatalf("ClaudeBot challenge should fail UA reachability, got %v", statuses["ai_ua_reachability|"])
+	if statuses["ai_ua_reachability|"] != geoStatusPass {
+		t.Fatalf("a firewall rule against the GPTBot training crawler must not affect UA reachability, got %v", statuses["ai_ua_reachability|"])
+	}
+	if statuses["robots_user_fetch|"] != geoStatusPass {
+		t.Fatalf("user-initiated fetchers should pass, got %v", statuses["robots_user_fetch|"])
 	}
 	if statuses["llms_txt|"] != geoStatusInfo {
 		t.Fatalf("llms.txt should be info, got %v", statuses["llms_txt|"])
@@ -811,7 +887,8 @@ func TestGeoAuditExecuteSyncEndToEnd(t *testing.T) {
 
 	summary := output["summary"].(map[string]any)
 	official := summary[geoSourceOfficial].(map[string]int)
-	if official["fail"] == 0 || official["pass"] == 0 {
+	// The fixture only restricts training crawlers, so no official check fails.
+	if official["fail"] != 0 || official["pass"] == 0 || official["warn"] == 0 {
 		t.Fatalf("unexpected official summary: %#v", official)
 	}
 	notes := output["notes"].([]string)

@@ -40,7 +40,7 @@ const (
 const (
 	geoRefRFC9309            = "https://www.rfc-editor.org/rfc/rfc9309"
 	geoRefOpenAIBots         = "https://platform.openai.com/docs/bots"
-	geoRefPerplexityBots     = "https://docs.perplexity.ai/guides/bots"
+	geoRefPerplexityBots     = "https://docs.perplexity.ai/docs/resources/perplexity-crawlers"
 	geoRefAnthropicBots      = "https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler"
 	geoRefApplebot           = "https://support.apple.com/en-us/119829"
 	geoRefBingCrawlers       = "https://www.bing.com/webmasters/help/which-crawlers-does-bing-use-8c184ec0"
@@ -137,6 +137,7 @@ func (a *geoAudit) buildChecks() {
 // geoAuditSiteChecks is the site-level rule table. Order defines output order.
 var geoAuditSiteChecks = []geoSiteCheck{
 	{ID: "robots_ai_search_access", Category: geoCategoryCrawl, Source: geoSourceOfficial, Reference: geoRefRFC9309, Evaluate: checkRobotsAISearchAccess},
+	{ID: "robots_user_fetch", Category: geoCategoryCrawl, Source: geoSourceOfficial, Reference: geoRefPerplexityBots, Evaluate: checkRobotsUserFetch},
 	{ID: "robots_training_policy", Category: geoCategoryCrawl, Source: geoSourceOfficial, Reference: geoRefOpenAIBots, Evaluate: checkRobotsTrainingPolicy},
 	{ID: "robots_deprecated_tokens", Category: geoCategoryCrawl, Source: geoSourceOfficial, Reference: geoRefAnthropicBots, Evaluate: checkRobotsDeprecatedTokens},
 	{ID: "ai_ua_reachability", Category: geoCategoryCrawl, Source: geoSourceOfficial, Reference: geoRefOpenAIBots, Evaluate: checkAIUserAgentReachability},
@@ -220,13 +221,55 @@ func checkRobotsAISearchAccess(a *geoAudit) (string, string) {
 			if allowed {
 				continue
 			}
-			blocked = append(blocked, bot.Token+" "+path+" -> Disallow: "+rule)
+			blocked = append(blocked, geoBlockedEntry(bot, path, rule))
 		}
 	}
 	if len(blocked) > 0 {
-		return geoStatusFail, geoEvidencef("blocked AI search/retrieval crawlers: %s", strings.Join(blocked, "; "))
+		return geoStatusFail, geoEvidencef("AI search crawling restricted: %s", strings.Join(blocked, "; "))
 	}
-	return geoStatusPass, geoEvidencef("%d AI search/retrieval crawlers allowed on %d audited paths", len(geoSearchRobots), len(paths))
+	return geoStatusPass, geoEvidencef("%d AI search crawlers allowed on %d audited paths", len(geoSearchRobots), len(paths))
+}
+
+func geoBlockedEntry(bot geoBot, path, rule string) string {
+	return bot.Engine + " " + bot.Token + " " + path + " -> Disallow: " + rule
+}
+
+// checkRobotsUserFetch reports robots rules for user-initiated fetchers
+// separately, because they do not decide whether a site appears in AI search.
+func checkRobotsUserFetch(a *geoAudit) (string, string) {
+	if a.robots != nil && a.robots.Err != "" {
+		return geoStatusInfo, geoEvidencef("robots.txt could not be fetched (%s); user-initiated fetch rules could not be verified", a.robots.Err)
+	}
+	if geoRobotsUnavailable(a) {
+		return geoStatusPass, "robots.txt not found; user-initiated AI fetchers are not restricted"
+	}
+	paths := a.auditedPaths()
+	honoured := make([]string, 0)
+	mayIgnore := make([]string, 0)
+	for _, bot := range geoUserFetchRobots {
+		for _, path := range paths {
+			allowed, rule := a.robots.geoRobotsAllows(bot.Token, path)
+			if allowed {
+				continue
+			}
+			if bot.MayIgnoreRobots {
+				mayIgnore = append(mayIgnore, geoBlockedEntry(bot, path, rule))
+			} else {
+				honoured = append(honoured, geoBlockedEntry(bot, path, rule))
+			}
+		}
+	}
+	if len(honoured) > 0 {
+		evidence := "these assistants honour robots.txt and cannot open the page when a user asks: " + strings.Join(honoured, "; ") + ". AI search visibility is checked separately"
+		if len(mayIgnore) > 0 {
+			evidence += "; also disallowed, but robots.txt may not apply: " + strings.Join(mayIgnore, "; ")
+		}
+		return geoStatusWarn, geoEvidence(evidence)
+	}
+	if len(mayIgnore) > 0 {
+		return geoStatusInfo, geoEvidencef("disallowed, but the vendor says robots.txt may not apply to user-initiated fetches, so this alone does not stop them: %s. AI search visibility is checked separately", strings.Join(mayIgnore, "; "))
+	}
+	return geoStatusPass, geoEvidencef("%d user-initiated AI fetchers allowed on %d audited paths", len(geoUserFetchRobots), len(paths))
 }
 
 func checkRobotsTrainingPolicy(a *geoAudit) (string, string) {
@@ -300,7 +343,7 @@ func checkAIUserAgentReachability(a *geoAudit) (string, string) {
 	if !baselineOK {
 		return geoStatusInfo, geoEvidencef("baseline (%s) also failed, so AI user-agent blocking cannot be isolated: %s", baseline, strings.Join(blocked, "; "))
 	}
-	return geoStatusFail, geoEvidencef("browser UA reached the homepage but AI user agents were rejected: %s. User-Agent layer only", strings.Join(blocked, "; "))
+	return geoStatusWarn, geoEvidencef("suspected block: browser UA reached the homepage but spoofed AI user agents were rejected: %s. A firewall may reject a spoofed user agent that the real crawler passes; confirm in the CDN/firewall bot log or server access log", strings.Join(blocked, "; "))
 }
 
 func geoChallengeSuffix(challenge bool) string {

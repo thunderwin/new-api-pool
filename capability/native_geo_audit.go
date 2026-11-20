@@ -35,22 +35,32 @@ const (
 // geoBot describes one published crawler identity used for robots evaluation
 // or user-agent reachability probing.
 type geoBot struct {
-	Token string
-	UA    string
+	Token  string
+	Engine string
+	UA     string
+	// MayIgnoreRobots marks user-initiated fetchers whose vendor documents that
+	// robots.txt may not apply to them.
+	MayIgnoreRobots bool
 }
 
-// geoSearchRobots are AI search / retrieval crawlers that official vendor docs
-// say should be allowed to surface a site in AI answers.
+// geoSearchRobots are the AI search crawlers that official vendor docs say
+// should be allowed for a site to surface in AI search answers.
 var geoSearchRobots = []geoBot{
-	{Token: "OAI-SearchBot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot) Chrome/131.0.0.0 Safari/537.36"},
-	{Token: "ChatGPT-User", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ChatGPT-User/1.0; +https://openai.com/bot) Chrome/131.0.0.0 Safari/537.36"},
-	{Token: "PerplexityBot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot) Chrome/119.0.0.0 Safari/537.36"},
-	{Token: "Perplexity-User", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user) Chrome/119.0.0.0 Safari/537.36"},
-	{Token: "Claude-SearchBot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-SearchBot/1.0; +claudebot@anthropic.com) Chrome/119.0.0.0 Safari/537.36"},
-	{Token: "Claude-User", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com) Chrome/131.0.0.0 Safari/537.36"},
-	{Token: "Googlebot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Googlebot/2.1; +http://www.google.com/bot.html) Chrome/131.0.0.0 Safari/537.36"},
-	{Token: "Bingbot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm) Chrome/131.0.0.0 Safari/537.36"},
-	{Token: "Applebot", UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 (compatible; Applebot/0.1; +http://www.apple.com/go/applebot)"},
+	{Token: "OAI-SearchBot", Engine: "ChatGPT", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot) Chrome/131.0.0.0 Safari/537.36"},
+	{Token: "PerplexityBot", Engine: "Perplexity", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot) Chrome/119.0.0.0 Safari/537.36"},
+	{Token: "Claude-SearchBot", Engine: "Claude", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-SearchBot/1.0; +claudebot@anthropic.com) Chrome/119.0.0.0 Safari/537.36"},
+	{Token: "Googlebot", Engine: "Google", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Googlebot/2.1; +http://www.google.com/bot.html) Chrome/131.0.0.0 Safari/537.36"},
+	{Token: "Bingbot", Engine: "Bing/Copilot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm) Chrome/131.0.0.0 Safari/537.36"},
+	{Token: "Applebot", Engine: "Apple", UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 (compatible; Applebot/0.1; +http://www.apple.com/go/applebot)"},
+}
+
+// geoUserFetchRobots open a page only when a user asks the assistant to. They
+// do not decide search visibility, and OpenAI and Perplexity say robots.txt
+// may not apply to them; Anthropic says its bots honour robots.txt.
+var geoUserFetchRobots = []geoBot{
+	{Token: "ChatGPT-User", Engine: "ChatGPT", MayIgnoreRobots: true, UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ChatGPT-User/1.0; +https://openai.com/bot) Chrome/131.0.0.0 Safari/537.36"},
+	{Token: "Perplexity-User", Engine: "Perplexity", MayIgnoreRobots: true, UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user) Chrome/119.0.0.0 Safari/537.36"},
+	{Token: "Claude-User", Engine: "Claude", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com) Chrome/131.0.0.0 Safari/537.36"},
 }
 
 // geoTrainingRobots are crawlers whose robots rules express a training-data
@@ -65,16 +75,15 @@ var geoTrainingRobots = []geoBot{
 }
 
 // geoProbeBots are the user agents fetched once against the homepage to detect
-// UA-level blocking or bot challenges.
+// UA-level blocking or bot challenges. Training crawlers are not probed: a
+// firewall rule against them is a training choice, not a visibility problem.
 var geoProbeBots = []geoBot{
-	geoSearchRobots[0], // OAI-SearchBot
-	geoSearchRobots[1], // ChatGPT-User
-	geoSearchRobots[2], // PerplexityBot
-	geoSearchRobots[4], // Claude-SearchBot
-	{Token: "ClaudeBot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com) Chrome/119.0.0.0 Safari/537.36"},
-	{Token: "GPTBot", UA: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot) Chrome/131.0.0.0 Safari/537.36"},
-	geoSearchRobots[6], // Googlebot
-	geoSearchRobots[7], // Bingbot
+	geoSearchRobots[0],    // OAI-SearchBot
+	geoUserFetchRobots[0], // ChatGPT-User
+	geoSearchRobots[1],    // PerplexityBot
+	geoSearchRobots[2],    // Claude-SearchBot
+	geoSearchRobots[3],    // Googlebot
+	geoSearchRobots[4],    // Bingbot
 }
 
 func init() {
@@ -330,7 +339,7 @@ func runGEOSiteAudit(ctx context.Context, m *Manifest, input map[string]any) (*S
 func (a *geoAudit) execute(ctx context.Context) (map[string]any, *ExecutionError) {
 	a.notes = append(a.notes,
 		"pages are fetched with plain HTTPS GET and no JavaScript execution; script-only content is not evaluated",
-		"AI user-agent reachability only measures the User-Agent layer; IP or reverse-DNS verified-bot rules are not observable",
+		"AI user-agent reachability only measures the User-Agent layer; IP or reverse-DNS verified-bot rules are not observable, and a firewall may reject a spoofed crawler user agent that the real crawler passes",
 	)
 	a.loadRobots(ctx)
 
