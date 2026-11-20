@@ -13,6 +13,38 @@
 
 ---
 
+## v0.6.17 — Claude 渠道自动补 5 分钟缓存断点（渠道级开关，默认关闭）（2026-11-20）
+
+> 状态：**已实现并离线核实**（`gofmt -l relay/channel/claude`、`go vet ./relay/channel/claude/ ./dto/`、
+> `go test -run AutoCache ./relay/channel/claude/`、`go test ./relay/channel/claude/ ./dto/ ./relay/common/`、
+> `go build ./...` 通过；`relay/channel/claude` 的 3 个 `TestRequestOpenAI2ClaudeMessage_*`
+> 是改动前就失败的基线，与本版本无关）；**未部署**。
+
+| 类型 | 变更 |
+|---|---|
+| `+` | 渠道其他设置新增 `claude_auto_cache_control`（`dto.ChannelOtherSettings.ClaudeAutoCacheControl`，`omitempty`）。**默认 `false`**：不打开的渠道行为完全不变 |
+| `+` | `dto.Tool` 新增 `CacheControl` 字段（类型 `json.RawMessage`，JSON tag 为 `cache_control,omitempty`，与 `ClaudeMediaMessage` 同形） |
+| `+` | 开关打开时，Anthropic 类型（type 14）渠道的 `ConvertOpenAIRequest`（`/v1/chat/completions` → `/v1/messages`）在转换结果上自动补 `{"type":"ephemeral"}` 断点（不带 `ttl`，即 5 分钟）。原生 Claude 请求路径 `ConvertClaudeRequest` 不动 |
+
+**断点规则（`relay/channel/claude/auto_cache_control.go`）**：
+
+- 请求里只要已有任意一个 `cache_control`（顶层 / tools / system 块 / 消息内容块），整个函数什么都不做；
+- 依次补：最后一个函数工具（跳过 web search 等非 `*dto.Tool` 工具）→ system 最后一个非空 text 块 →
+  最后一条消息的最后一个内容块 → 从倒数第二条往前最近一条 `user` 消息的最后一个内容块
+  （“上一轮结尾”，上游只向前回看 20 个块，让下一次请求精确命中上一轮写下的缓存）；
+- 字符串 `content` 会先改成单个 text 块再加断点，**文本内容不变**；空字符串 / 空 text 块不加
+  （上游拒绝空 text 块上的 `cache_control`）；不改任何文本、顺序、角色，单请求最多 4 个断点。
+
+**测试**：`relay/channel/claude/auto_cache_control_test.go`，覆盖开关关闭（序列化后不含 `cache_control`）、
+完整场景恰好 4 个断点及位置、已有 `cache_control` 时不动、单条 user 消息只有 1 个断点、
+web search 工具跳过、最后一个块是 `tool_result`、空文本不加断点、tools 序列化出现
+`"cache_control":{"type":"ephemeral"}`；其中开关关闭 / 完整场景两个用例走
+`ConvertOpenAIRequest` 端到端。
+
+**不做**：不改前端、不加 UI 开关；不动 OpenAI 渠道、计费、thinking / reasoning_effort 映射。
+
+---
+
 ## v0.6.16 — GEO 体检分开判定搜索、用户触发访问和训练（2026-11-20）
 
 > 状态：**已实现并离线核实**（`go test ./capability/... ./controller/...`、`gofmt -l capability` 通过）；

@@ -95,7 +95,16 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	return RequestOpenAI2ClaudeMessage(c, *request)
+	claudeRequest, err := RequestOpenAI2ClaudeMessage(c, *request)
+	if err != nil {
+		return nil, err
+	}
+	// 渠道开关打开时才给 OpenAI→Claude 的转换结果自动补缓存断点；
+	// 原生 Claude 请求路径（ConvertClaudeRequest）不动。
+	if info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ClaudeAutoCacheControl {
+		ApplyAutoCacheControl(claudeRequest)
+	}
+	return claudeRequest, nil
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {

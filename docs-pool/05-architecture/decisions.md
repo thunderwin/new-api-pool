@@ -285,6 +285,47 @@ GORM 的 `default` tag 会在字段为 zero-value（false/0/""）时填默认值
 
 ---
 
+## ADR-0011：Claude 走原生 /v1/messages 渠道并由中转站补缓存断点
+
+### 背景
+
+线上 Claude 流量几乎都是 OpenAI 格式的 `/v1/chat/completions`，客户端不带任何 `cache_control`。
+这条路径上：
+
+- OpenAI 兼容路径本身不认 `cache_control`，中转只能自己猜缓存点；
+- 不显式打标记时，上游只会在请求结尾处自动缓存，而 agent 类客户端的对话历史是滑动窗口（前面被截掉），
+  下一轮请求基本对不上上一轮的缓存前缀，结果是**每轮都在冷写**；
+- 实测口径：约一半 Opus 花费是冷写（2026-11-20 核实）。
+
+### 决策
+
+- 新增 Anthropic 类型（type 14）渠道直连上游 `/v1/messages`，保留上游原生的显式缓存能力；
+- 缓存断点由中转站在 **OpenAI→Claude 转换之后**自动补，通过**渠道级开关**
+  `claude_auto_cache_control`（`dto.ChannelOtherSettings.ClaudeAutoCacheControl`）打开，**默认关闭**；
+  关闭时请求与旧行为完全一致；
+- **只补 5 分钟**（`{"type":"ephemeral"}`，不带 `ttl`），不引入 1 小时档；
+- **只作用于 OpenAI→Claude 这条路径**（`ConvertOpenAIRequest`），原生 Claude 请求
+  （`ConvertClaudeRequest`）不碰；请求里已存在任何 `cache_control` 时整体不动；
+- 断点位置：最后一个函数工具、system 最后一个非空 text 块、最后一条消息的最后一个内容块、
+  以及“上一轮结尾”（从倒数第二条往前最近一条 `user` 消息的最后一个内容块），单请求最多 4 个；
+- thinking 由渠道的 `param_override` 删掉 `thinking` 保持关闭，**不改代码**；
+- 旧的 OpenAI 兼容 Claude 渠道（type 1 走 `/v1/chat/completions`）**保留**，作为回滚路径。
+
+### 后果
+
+- ✅ 显式断点让下一轮请求能在同一位置命中上一轮写下的缓存，降低冷写比例；
+- ✅ 默认关闭，未打开的渠道零影响；规则集中在
+  `relay/channel/claude/auto_cache_control.go`，不改任何文本、顺序、角色；
+- ❌ type 14 渠道**不支持 `/v1/responses`**（该路径在本 adaptor 里仍是 not implemented），
+  需要 responses 的客户端只能继续走旧渠道；
+- ⚠️ 客户端把历史改成缓存友好的形态（保留稳定前缀）是**后续计划，还没做**；
+  在那之前，断点只能缓解、不能消除滑动窗口带来的冷写；
+- ⚠️ 目前没有 UI 开关，只能通过渠道设置字段打开（本版本不改前端）。
+
+### 状态：accepted（2026-11-20），未部署
+
+---
+
 ## 模板：要新加一个 ADR
 
 ```md
