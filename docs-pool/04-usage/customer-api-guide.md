@@ -910,7 +910,8 @@ DataForSEO 直连的 `quantity` 是响应体 `$.cost` 美元数，`price_usd=1`�
 | `hy4-preview` | token | 0.417 | 1.2505 | 0.021 |
 | `longcat-2.0` | token | 0.15 | 0.60 | 0.003 |
 | `muse-spark-1.3-contributor` | token | 0.10 | 0.20 | 0.002 |
-| `gpt-image-2.5` | 按张 | 0.01 / 张 | — | — |
+| `gpt-image-2.6` | 按张 | 0.01 / 张 | — | — |
+| `gpt-image-2.5`（旧名，与 2.6 同一模型，保留兼容） | 按张 | 0.01 / 张 | — | — |
 | `grok-imagine-image-2.0` | 按张 | 0.01 / 张 | — | — |
 
 ---

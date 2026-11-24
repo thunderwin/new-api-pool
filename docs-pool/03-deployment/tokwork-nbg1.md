@@ -1297,6 +1297,20 @@ TRUSTED_ORIGINS=https://www.tokwork.com,https://tokwork.com
 
 ---
 
+### 图片模型改名为 `gpt-image-2.6`（2026-11-24）
+
+上游 Wokey 已把 `gpt-image-2.5` 改名为 `gpt-image-2.6`（11-17 对账时，我们以 2.5 调用的出图在 Wokey 侧都记在 2.6 下）。
+为统一名字，直接改库（内存缓存每 60 秒从库同步，无需重启），改前备份在服务器
+`/opt/new-api-pool/backups/gpt-image-26-20261124-091226.bak.txt`：
+
+- `channels.id=2`（wokey）的 `models` 追加 `gpt-image-2.6`；
+- 照 `gpt-image-2.5` 那行在 `abilities` 加 `(default, gpt-image-2.6, 2)`；
+- `options.ModelPrice` 加 `"gpt-image-2.6": 0.01`。
+
+`gpt-image-2.5` 原样保留，让还没同步新目录的客户端继续可用。同步后 `/v1/models` 同时列出两个名字，
+用测试账号以 `gpt-image-2.6` 出图 4 次成功。ericBot 后台模型目录同日新增 `gpt-image-2.6` 并设为默认图片
+模型，2.5 保留为备用。`/root/newapi-admin-token.txt` 里的管理员令牌仍然失效，所以这次没有走 `/api/channel/`。
+
 ## 9. 还没做（计划，不是现状）
 
 - [ ] 确认管理员密码足够强（初始化时自设，系统无默认账号）；删除默认令牌
