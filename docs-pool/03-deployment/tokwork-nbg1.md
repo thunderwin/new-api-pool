@@ -658,6 +658,19 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 实测 | 用运维自用 key 各调一次，`keyword` 为 `silicone bust`、`limit` 20：suggestions 返回 12 个词，成本 $0.01344；related 返回 20 个词（depth 1–2），成本 $0.0144。related 结果大量偏到「胸部」含义，调用方需要做业务相关度过滤 |
 | 回滚 | 未触发 |
 
+#### 2026-11-25 长尾关键词空结果修复（已部署）
+
+> 以下为已核实事实。只换二进制；compose 与 `.env` 未改（changelog v0.6.19）。
+
+| 项 | 值 |
+|---|---|
+| 部署前核对 | 服务器二进制 SHA-256 前缀 `fe84a034475d`，与上一条记录一致 |
+| 备份 | `new-api.bak-20261125-091941`、`docker-compose.yml.bak-20261125-091941`、`.env.bak-20261125-091941` |
+| 重建窗口 | `09:20:58Z` → `09:21:10Z` healthy |
+| 二进制 SHA-256 前缀 | `0f26ac8c1b28`，容器内相同 |
+| 健康 | `new-api-app` healthy；`/api/status` 200 |
+| 回滚 | 未触发 |
+
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
 
 > 已核实 2026-10-10：直连上游与经本系统中转**均返回 200**。
