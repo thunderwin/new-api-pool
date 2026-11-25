@@ -57,7 +57,9 @@
       "values": [
         20000
       ],
-      "failure_code": "upstream_task_failed"
+      "failure_code": "upstream_task_failed",
+      "non_empty": "$.tasks.0.result.0.items",
+      "empty_ok": true
     },
     "collections": {
       "keywords": {

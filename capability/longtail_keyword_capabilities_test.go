@@ -517,6 +517,40 @@ func TestLongTailKeywordTimeoutIsReportedAsUncertain(t *testing.T) {
 	}
 }
 
+// A seed with no results comes back as an empty result list, missing items or
+// `items: null`; all three are an empty success, not a failed call.
+func TestLongTailKeywordEmptyResultsSucceed(t *testing.T) {
+	allowLocalTestUpstreams(t)
+	setDataForSEOAuth(t)
+
+	bodies := map[string]string{
+		"result array is empty": `{"status_code":20000,"cost":0.01,"tasks":[{"status_code":20000,"result":[]}]}`,
+		"items are missing":     `{"status_code":20000,"cost":0.01,"tasks":[{"status_code":20000,"result":[{"se_type":"google"}]}]}`,
+		"items are null":        `{"status_code":20000,"cost":0.01,"tasks":[{"status_code":20000,"result":[{"se_type":"google","items":null}]}]}`,
+	}
+	for _, capability := range longTailKeywordCapabilities() {
+		for name, body := range bodies {
+			t.Run(capability.id+"/"+name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(body))
+				}))
+				defer server.Close()
+
+				manifest := cloneKeywordManifest(t, capability.id, server.URL)
+				result, execErr := ExecuteSync(context.Background(), manifest, capability.input, "")
+				if execErr != nil {
+					t.Fatalf("%s empty result should succeed: %#v", capability.id, execErr)
+				}
+				items, ok := result.Output["keywords"].([]any)
+				if !ok || len(items) != 0 {
+					t.Fatalf("%s expected an empty keyword list: %#v", capability.id, result.Output)
+				}
+			})
+		}
+	}
+}
+
 func TestLongTailKeywordMissingUpstreamFieldsFail(t *testing.T) {
 	allowLocalTestUpstreams(t)
 	setDataForSEOAuth(t)
@@ -527,18 +561,6 @@ func TestLongTailKeywordMissingUpstreamFieldsFail(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{
-			name:       "result array is missing",
-			body:       `{"status_code":20000,"cost":0.01,"tasks":[{"status_code":20000,"result":[]}]}`,
-			wantCode:   "missing_output_field",
-			wantStatus: http.StatusBadGateway,
-		},
-		{
-			name:       "items are missing",
-			body:       `{"status_code":20000,"cost":0.01,"tasks":[{"status_code":20000,"result":[{"se_type":"google"}]}]}`,
-			wantCode:   "missing_output_field",
-			wantStatus: http.StatusBadGateway,
-		},
 		{
 			name:       "tasks are missing",
 			body:       `{"status_code":20000,"cost":0.01,"tasks":[]}`,

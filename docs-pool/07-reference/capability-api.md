@@ -343,6 +343,8 @@ DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态�
 补上 `keyword-ideas-v1`（按品类联想、容易挖到无关词）的短板。两者沿用上表同一套契约，
 并固定 `include_serp_info: false`、`include_clickstream_data: false`，不额外暴露
 上游开关：suggestions 只多了 `include_seed_keyword`，related 连它也不暴露。
+词根没有结果时（结果为空数组、缺少 `items` 或 `items` 为 null），两者都返回空的 `keywords: []`，
+按声明的空结果处理，不再报 `invalid_output_field`（v0.6.19）。
 
 | ID | 上游端点（`/v3/...`） | 输出 collection |
 |---|---|---|

@@ -13,6 +13,18 @@
 
 ---
 
+## v0.6.19 — 长尾关键词能力把「无结果」当作空成功（2026-11-25）
+
+> 状态：已部署，见 `docs-pool/03-deployment/tokwork-nbg1.md` 同日记录。
+
+- 🐛 `related-keywords-v1` 对没有相关搜索的词根返回 502 `invalid_output_field`：DataForSEO Labs 此时给
+  `items: null`，执行器只把「集合缺失」当作声明过的空结果，没处理「集合为 null」。执行器现在把两者同样处理
+  （仍然只在 Manifest 声明 `success.non_empty` + `empty_ok` 且集合路径就是 `non_empty` 时生效），
+  `keyword-suggestions-v1` 和 `related-keywords-v1` 都声明了 `non_empty: $.tasks.0.result.0.items`、`empty_ok: true`。
+- * 结果为空数组、缺少 `items` 或 `items` 为 null 时返回空 `keywords: []` 并按空结果结算；任务列表缺失仍按
+  `upstream_task_failed` 失败。
+- 发现方式：ericBot 研究服务首次实跑，同一批词根里 3 次失败（2026-11-25 09:16Z）。
+
 ## v0.6.18 — 新增 2 个 DataForSEO 长尾关键词能力（2026-11-25）
 
 > 状态：**已实现并离线核实**（`go build ./...`、

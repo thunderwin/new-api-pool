@@ -246,7 +246,9 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 	}
 	for key, spec := range m.Response.Collections {
 		value, ok := Lookup(raw, spec.Path)
-		if !ok {
+		// A declared empty response may come back as a missing collection or as an explicit
+		// null (DataForSEO Labs returns `items: null` when a seed has no results).
+		if !ok || value == nil {
 			if m.Response.Success.EmptyResponse(raw) && spec.Path == m.Response.Success.NonEmpty {
 				output[key] = []any{}
 				continue
