@@ -1,4 +1,4 @@
-# 第三方 Capability API（2026-11-19 更新）
+# 第三方 Capability API（2026-11-25 更新）
 
 > 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
@@ -51,6 +51,13 @@
 > 豆包不带工具、固定 `reasoning: {"effort": "minimal"}`，是模型记忆问答；
 > 凭证是运维账号的 API token，只写在服务端变量 `CAPABILITY_RELAY_SELF_KEY`。
 > 通用 Manifest 同时新增 `response.optional_output`。线上发布状态以部署记录为准。
+>
+> **2026-11-25 追加（已实现并离线核实，线上发布以部署记录为准）**：新增 2 个
+> DataForSEO Labs **长尾关键词**直连能力 `keyword-suggestions-v1`
+> （`keyword_suggestions/live`，含词根的长尾词）与 `related-keywords-v1`
+> （`related_keywords/live`，谷歌「搜索相关」词）。两者只写 Manifest，不改执行器，
+> reserve 均为 `$0.12`；验收命令 `go build ./...` 与
+> `go test ./capability/... ./controller/...` 均通过。
 
 ## 路由
 
@@ -199,6 +206,8 @@ GET /v1/tasks/task_...
 | `keyword-gap-v1` | AISA / DataForSEO | 同步 | 上游实际成本 | 两域名关键词交集/差距 |
 | `keyword-ideas-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 种子词扩展相关关键词 |
 | `keyword-volume-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 关键词搜索量与 12 个月趋势 |
+| `keyword-suggestions-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | 包含词根的长尾关键词建议 |
+| `related-keywords-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Google「搜索相关」长尾关键词 |
 | `serp-google-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Google 自然搜索 SERP |
 | `ai-answer-chatgpt-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | ChatGPT 问答答案与引用来源 |
 | `ai-answer-claude-v1` | DataForSEO 直连 | 同步 | 上游正文 `cost` | Claude 问答答案与引用来源 |
@@ -292,19 +301,28 @@ AISA 余额共减少 `$0.036156`，验证后余 `$0.907844`。Similarweb 未做�
 |---|---|---|
 | `keyword-ideas-v1` | 1–20 个 `keywords`；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 50，最大 200）、`offset`（默认 0）；输出 `keywords[]` 七个字段 | $0.04 |
 | `keyword-volume-v1` | 1–200 个 `keywords`；可选 `location_name`、`language_code`；`keywords` 默认 1 条；输出 `keywords[]` 七个字段 | $0.04 |
+| `keyword-suggestions-v1` | `keyword`（单个词根）；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 100，最大 1000）、`offset`（默认 0）、`include_seed_keyword`（默认 `false`）；输出 `keywords[]` 七个字段 | $0.12 |
+| `related-keywords-v1` | `keyword`；可选 `location_name`、`language_code`（同上）、`depth`（0–4，默认 2）、`limit`（默认 100，最大 1000）、`offset`（默认 0）；输出 `keywords[]` 八个字段（多一个 `depth`） | $0.12 |
 | `serp-google-v1` | `keyword`；可选 `location_code`（默认 2840）、`language_code`（默认 `en`）、`device`（默认 `desktop`）、`depth`（默认 10，官方最大 200）、`os`（默认 `windows`）、`calculate_rectangles`（默认 `false`）；输出 `result` | $0.21 |
 
 价格依据：
 
-- DataForSEO Labs Google 通用端点为每任务 `$0.012` + 每项 `$0.00012`。
-  ideas 在 `limit=200` 时约 `$0.036`；volume 在 200 个关键词时约 `$0.036`。
-  两者 reserve 取整为 `$0.04`。
+- DataForSEO Labs Google 通用端点为每任务 `$0.01` + 每返回一条 `$0.0001`
+  （2026-11-25 复核官方文档示例：`keyword_ideas` 的 `limit=3` 返回 `cost=0.0103`，
+  `keyword_suggestions` 的 `limit=1` 返回 `cost=0.0101`；此前 2026-11-06 记录的
+  `$0.012` + `$0.00012` 与当前官方示例不符，已按官方示例改正）。
+  ideas 在 `limit=200` 时约 `$0.03`；volume 在 200 个关键词时约 `$0.03`；
+  suggestions / related 在 `limit=1000` 时约 `$0.11`，故 reserve 分别为
+  `$0.04` / `$0.04` / `$0.12` / `$0.12`。
 - Google Organic Live 为每个最多 10 条结果的 SERP `$0.002`。`depth=200` 为 20 个
   SERP、`calculate_rectangles=true` 再加一个基础价；关键词带搜索操作符时再乘 5，
   上限约 `$0.202`，reserve 取 `$0.21`。
 - 官方价格页：
   <https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api>、
   <https://dataforseo.com/pricing/serp/google-organic-serp-api>。
+- 官方文档（2026-11-25 核实）：
+  <https://docs.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live/>、
+  <https://docs.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live/>。
 
 DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态码 40100（鉴权）、
 40200/40210（余额）、40202/40209（限流）、40501/40503/40506（请求参数）、
@@ -318,6 +336,39 @@ DataForSEO 的错误映射覆盖 HTTP 401/402/429/500/503，以及内部状态�
 `keyword_difficulty` 取自 DataForSEO 的 `keyword_properties.keyword_difficulty`，
 为 0–100 的整数（对数刻度，越高越难进前十）。两个端点默认返回该字段，
 不需要额外参数也不额外收费（官方文档核实日期：2026-11-11）。
+
+#### 长尾关键词补充（2 个，2026-11-25）
+
+新增的两个端点都接收**一个**词根（`keyword`），用于挖「必须包含词根」的长尾词，
+补上 `keyword-ideas-v1`（按品类联想、容易挖到无关词）的短板。两者沿用上表同一套契约，
+并固定 `include_serp_info: false`、`include_clickstream_data: false`，不额外暴露
+上游开关：suggestions 只多了 `include_seed_keyword`，related 连它也不暴露。
+
+| ID | 上游端点（`/v3/...`） | 输出 collection |
+|---|---|---|
+| `keyword-suggestions-v1` | `dataforseo_labs/google/keyword_suggestions/live` | `keywords[]` |
+| `related-keywords-v1` | `dataforseo_labs/google/related_keywords/live` | `keywords[]` |
+
+- `keyword-suggestions-v1`：上游 items 与 `keyword_ideas` 同构，字段路径
+  `$.keyword`、`$.keyword_info.search_volume`、`$.keyword_info.cpc`、
+  `$.keyword_info.competition_level`、`$.keyword_properties.keyword_difficulty`、
+  `$.search_intent_info.main_intent`、`$.keyword_info.monthly_searches`。
+  可选输入 `include_seed_keyword`（默认 `false`）在 `true` 时让上游多返回
+  `seed_keyword_data`，平台不投影该字段。
+- `related-keywords-v1`：上游 item 是 `{se_type, keyword_data, depth, related_keywords}`，
+  因此字段路径都要先过 `keyword_data`：`$.keyword_data.keyword`、
+  `$.keyword_data.keyword_info.search_volume`、`$.keyword_data.keyword_info.cpc`、
+  `$.keyword_data.keyword_info.competition_level`、
+  `$.keyword_data.keyword_properties.keyword_difficulty`、
+  `$.keyword_data.search_intent_info.main_intent`、
+  `$.keyword_data.keyword_info.monthly_searches`；另外多投影 item 级 `$.depth`
+  （0–4，指出该词在第几层「相关搜索」被挖到）。`related_keywords` 子列表不投影。
+  `depth` 输入默认 **2**（上游文档默认是 1，这里显式发 2 以多取一层长尾词），
+  范围 0–4 在预扣费前校验。
+
+两个端点的 items 结构差异是 `related-keywords-v1` 的主要坑：路径写成
+`$.keyword` / `$.keyword_info.*` 会整列输出 `null`，`TestLongTailKeywordOutputFieldPaths`
+与黄金样例输出一起锁住这一点。
 
 `serp-google-v1` 继续输出完整 DataForSEO `result`。目标 SERP 含 `people_also_ask`
 时基础问题项保留在 `output.result[0].items[]`；当前仍未暴露
@@ -666,7 +717,7 @@ AISA 运营方余额耗尽的 402 不会变成客户自己的 `quota_insufficien
 
 ### DataForSEO 按响应体成本计价
 
-DataForSEO 14 个直连能力（3 个关键词/SERP + 11 个 AI Optimization）的
+DataForSEO 16 个直连能力（5 个关键词/SERP + 11 个 AI Optimization）的
 `billing.quantity_path` 都是 `$.cost`，
 `billing.unit=usd`、`billing.price_usd=1`。返回值就是该次任务实际花费的美元数，
 平台按 1 倍成本价计费。成本缺失时使用 Manifest 的 `reserve_usd`；上限见上面直连能力表。

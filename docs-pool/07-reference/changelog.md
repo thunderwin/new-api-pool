@@ -13,6 +13,80 @@
 
 ---
 
+## v0.6.18 — 新增 2 个 DataForSEO 长尾关键词能力（2026-11-25）
+
+> 状态：**已实现并离线核实**（`go build ./...`、
+> `go test ./capability/... ./controller/...` 通过；本次改动的 Go 文件 `gofmt -l` 干净；
+> `controller/pool.go`、`controller/token_test.go` 是改动前就未格式化的基线，本次未触碰）。
+> **未部署**，线上发布状态以部署记录为准。
+
+**为什么**：ericBot 建站要继续挖长尾关键词。现有 `keyword-ideas-v1` 是按品类联想扩词，
+经常混进无关词；需要「必须包含词根」的长尾词（`keyword_suggestions`）和谷歌
+「搜索相关」（`related_keywords`）两个维度。两者都能用现有 Manifest DSL 完整表达，
+因此**没有改执行器，也没有加供应商特判**。
+
+| 类型 | 变更 |
+|---|---|
+| `+` | `keyword-suggestions-v1` → `POST /v3/dataforseo_labs/google/keyword_suggestions/live`；必填 `keyword`（单个词根）；可选 `location_name`（默认 `United States`）、`language_code`（默认 `en`）、`limit`（默认 100，1–1000 整数）、`offset`（≥0 整数）、`include_seed_keyword`（布尔，默认 `false`）；常量 `include_serp_info=false`、`include_clickstream_data=false`；输出 `keywords[]` |
+| `+` | `related-keywords-v1` → `POST /v3/dataforseo_labs/google/related_keywords/live`；必填 `keyword`；可选 `location_name`、`language_code`、`depth`（0–4 整数，默认 2）、`limit`（默认 100，1–1000）、`offset`；同样固定两个 `include_*` 常量；输出 `keywords[]` 外加 item 级 `depth` |
+| `*` | 两个 Manifest 沿用现有 DataForSEO 契约：`provider: dataforseo`、HTTP Basic（`CAPABILITY_DATAFORSEO_LOGIN` / `CAPABILITY_DATAFORSEO_PASSWORD`）、单元素数组 body、`$.tasks.0.status_code == 20000` 成功判断、同一套 `error_map`、`per_unit` + `quantity_path=$.cost` 按成本价结算（缺失 `cost` 按 `reserve_usd` 兜底）、仅 429/503 重试一次、90s 超时 |
+| `*` | 测试里嵌入 Manifest 总数 37 → 39，能力目录断言 37 → 39；`keyword-ideas-v1` / `keyword-volume-v1` / `serp-google-v1` 及其它能力不变 |
+
+**输出字段路径（已对照官方文档核实）**：
+
+- `keyword-suggestions-v1` 的 items 与 `keyword_ideas` 同构：`$.keyword`、
+  `$.keyword_info.search_volume`、`$.keyword_info.cpc`、`$.keyword_info.competition_level`、
+  `$.keyword_properties.keyword_difficulty`、`$.search_intent_info.main_intent`、
+  `$.keyword_info.monthly_searches`。
+- `related-keywords-v1` 的 items 是 `{se_type, keyword_data, depth, related_keywords}`，
+  全部字段都要过 `keyword_data`：`$.keyword_data.keyword`、
+  `$.keyword_data.keyword_info.search_volume`、`$.keyword_data.keyword_info.cpc`、
+  `$.keyword_data.keyword_info.competition_level`、
+  `$.keyword_data.keyword_properties.keyword_difficulty`、
+  `$.keyword_data.search_intent_info.main_intent`、
+  `$.keyword_data.keyword_info.monthly_searches`，加 item 级 `$.depth`。
+  路径写错只会整列输出 `null`，所以用专门的
+  `TestLongTailKeywordOutputFieldPaths` 加黄金输出双重锁住。
+
+**定价（官方文档示例核实，2026-11-25）**：DataForSEO Labs 每个任务约 `$0.01`，
+每返回一条约 `$0.0001`；`limit=1000` 时上限约 `$0.11`，两个能力的 `reserve_usd` 都取
+`$0.12`。依据是官方响应示例里的 `cost`：`keyword_suggestions` 的 `limit=1` 返回
+`0.0101`，`keyword_ideas` / `related_keywords` 的 `limit=3` 返回 `0.0103`。
+（同一轮把 `capability-api.md` 里 2026-11-06 记录的 `$0.012` + `$0.00012` 改正为
+`$0.01` + `$0.0001`，reserve 结论不变。）
+
+**怎么测的**：新增 `capability/longtail_keyword_capabilities_test.go`，全部离线、
+fixture 为合成数据（未使用真实上游响应或真实凭据）：
+
+- Manifest 契约（端点、Basic 鉴权、`$.cost` 计费、reserve 0.12、`body_wrap=array`、
+  必填字段、默认值、`limit`/`offset`/`depth` 范围、两个 `include_*` 常量、
+  success/error_map/retry）与输出字段路径；
+- 成功：默认请求体与投影输出逐字比对黄金样例（含第二条 item 的 `null` 字段）；
+- 可选输入透传（`location_name` / `language_code` / `limit` / `offset` /
+  `depth` / `include_seed_keyword`）；
+- `depth` -1/5/1.5、`limit` 0/1001/10.5、`offset` -1 → 预扣前 400 `invalid_request`；
+- 缺 `keyword` / 空串 / 纯空白 → 400；
+- 4xx：内部状态 40501、HTTP 400 → 400 `invalid_request`；5xx：HTTP 500 →
+  503 `upstream_unavailable`（`upstream_provider_failure`）、HTTP 503 → 重试一次后
+  503，错误文案不泄露上游 `status_message` 与凭据；
+- 超时：`timeout=1s` + 上游 1.4s → 504 `upstream_timeout` 且标记
+  `RequestWritten` / `MayHaveCharged`，不重试；
+- 上游结果缺 `result` / `items` → 502 `missing_output_field`，缺 `tasks` →
+  502 `upstream_task_failed`；
+- controller：两个能力的 `$.cost` 精确结算与 `cost` 缺失/非法时按 reserve 兜底
+  （`usage_source=reserve_fallback`），并校验 quota、消费日志与凭据不泄露；
+  能力目录 39 条、两个新能力 `max_usd=0.12`。
+
+**文档（同轮）**：`RULES.md` §1/§9、本 changelog、
+`docs-pool/07-reference/capability-api.md`（能力目录 + 长尾关键词小节 + 价格依据改正）、
+`docs-pool/04-usage/customer-api-guide.md` 的能力表。均标注
+「已实现并离线核实，线上以部署记录为准」，没有写成已上线。
+
+**不做**：不改执行器、不改其它能力、不部署、不碰服务器、不发真实请求、
+不动 `docs-pool/07-reference/upstream-wokey.md`、`ops/sync-wokey-pricing.py` 和二进制文件。
+
+---
+
 ## v0.6.17 — Claude 渠道自动补 5 分钟缓存断点（渠道级开关，默认关闭）（2026-11-20）
 
 > 状态：**已实现并离线核实**（`gofmt -l relay/channel/claude`、`go vet ./relay/channel/claude/ ./dto/`、

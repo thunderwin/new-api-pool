@@ -91,6 +91,30 @@
   `effort=minimal` 时推理 token 为 0、约 30 秒完成但同样不联网；grok 单次实测
   188897 token（$0.047）逼近 reserve，故 reserve 由 `$0.06` 上调到 `$0.10`。
   这 3 个能力**已实现并离线核实**，未部署，线上发布状态以部署记录为准。
+- 2026-11-25 已核实（离线）：Capability 层共有 **39 个能力**，其中 38 个走 HTTP API
+  （15 个经 AISA、**16 个直连 DataForSEO**、3 个 `relay` 能力、4 个其它供应商），
+  另有 1 个原生能力 `geo-site-audit-v1`；即 2026-11-19 的 37 / 14 各加 2。
+  本日新增 2 个 DataForSEO Labs **长尾关键词**直连能力，没有新增 Go 代码、没有改执行器：
+  - `keyword-suggestions-v1`（`dataforseo_labs/google/keyword_suggestions/live`）：
+    必填 `keyword`（单个词根）；可选 `location_name`（默认 `United States`）、
+    `language_code`（默认 `en`）、`limit`（默认 100，1–1000 整数）、`offset`（≥0 整数）、
+    `include_seed_keyword`（布尔，默认 `false`）；输出 `keywords[]`，字段与
+    `keyword-ideas-v1` 相同（`keyword`、`search_volume`、`cpc`、`competition`、
+    `keyword_difficulty`、`intent`、`monthly_searches`）。
+  - `related-keywords-v1`（`dataforseo_labs/google/related_keywords/live`）：
+    必填 `keyword`；可选 `location_name`、`language_code`（同上）、
+    `depth`（0–4 整数，默认 2；上游默认 1，这里显式发 2 以多取一层「相关搜索」）、
+    `limit`（默认 100，1–1000）、`offset`（≥0）。上游 items 结构与 suggestions 不同：
+    词在 `$.keyword_data.keyword`，指标在 `$.keyword_data.keyword_info.*` /
+    `$.keyword_data.keyword_properties.keyword_difficulty` /
+    `$.keyword_data.search_intent_info.main_intent`，另输出 item 级 `depth`。
+  两者沿用同一套契约（`provider: dataforseo`、HTTP Basic、单元素数组 body、
+  `$.tasks.0.status_code == 20000` 成功判断、同一套 `error_map`、`$.cost` 按成本价结算、
+  cost 缺失按 reserve 兜底），常量固定 `include_serp_info: false`、
+  `include_clickstream_data: false`；reserve 均为 `$0.12`
+  （官方文档示例：每任务约 `$0.01` + 每返回一条约 `$0.0001`，`limit=1000` 时约 `$0.11`）。
+  两个能力**已实现并离线核实**（`go build ./...`、`go test ./capability/... ./controller/...`），
+  线上是否已发布以部署记录为准。
 
 **结论：普通 REST API 不能只填一个 base URL 就原生接入；必须经过能力适配层。**
 
@@ -632,17 +656,17 @@ limits:
 | 日志 | `logs` + capability/provider/usage 字段 |
 
 > 当前 `weather-v1`（同步）、`ssl-analyze-v1`（异步）、`web-unlock-v1`
-> （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、14 个
-> DataForSEO 直连能力（3 个关键词/SERP + 11 个 AI Optimization）、
+> （Bright Data Web Unlocker，同步）、15 个经 AISA 的搜索/SEO 能力、16 个
+> DataForSEO 直连能力（5 个关键词/SERP + 11 个 AI Optimization）、
 > `web-search-v1`（DeepSeek Search，同步）、3 个经本站 `/v1/responses` 的模型问答能力
 > （`ai-answer-grok-v1` / `ai-answer-kimi-v1` / `ai-answer-doubao-v1`，`provider: relay`；
 > grok 与 kimi 联网问答，豆包为不联网的模型记忆问答）
 > 和 `geo-site-audit-v1`（原生 GEO 体检，同步）
-> 已接入，编码后共 37 个能力。
+> 已接入，编码后共 39 个能力。
 > `weather-v1`、`ssl-analyze-v1` 与 `geo-site-audit-v1` 是免费试点；AISA 按上游
 > 实际成本结算；DataForSEO 直连能力按响应正文 `cost` 结算；3 个 `relay` 问答能力
 > 按 `usage.total_tokens` × 每 token 单价结算（reserve 兜底）；
 > `web-unlock-v1` 与 `web-search-v1` 按次收费，后者空结果免费。
-> 11 个 AI Optimization 能力和 3 个 `relay` 问答能力已实现并在离线测试中核实
-> （2026-11-19），线上发布状态以部署记录为准。
+> 11 个 AI Optimization 能力、3 个 `relay` 问答能力和 2 个长尾关键词能力已实现并在
+> 离线测试中核实（2026-11-19 / 2026-11-25），线上发布状态以部署记录为准。
 > 多供应商路由、后台 Manifest 编辑、SSE 流式仍在 Phase 2/3。

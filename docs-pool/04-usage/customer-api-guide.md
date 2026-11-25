@@ -334,6 +334,8 @@ DataForSEO 直连关键词能力（按响应正文 `cost` 成本价结算）：
 |---|---|---|---|
 | `keyword-ideas-v1` | 种子词扩展相关关键词 | `keywords`（1–20 个）、`location_name`、`language_code`、`limit`（默认 50，最大 200）、`offset` | $0.04 |
 | `keyword-volume-v1` | 关键词搜索量与 12 个月趋势 | `keywords`（1–200 个）、`location_name`、`language_code` | $0.04 |
+| `keyword-suggestions-v1` | 包含词根的长尾关键词建议 | `keyword`（单个词根）、`location_name`、`language_code`、`limit`（默认 100，最大 1000）、`offset`、`include_seed_keyword`（默认 false） | $0.12 |
+| `related-keywords-v1` | Google「搜索相关」长尾关键词 | `keyword`、`location_name`、`language_code`、`depth`（0–4，默认 2）、`limit`（默认 100，最大 1000）、`offset` | $0.12 |
 | `serp-google-v1` | Google SERP | `keyword`、地区、语言、设备、`depth`、`load_async_ai_overview`（默认 false，开启后额外 $0.002） | $0.21 |
 
 AI 可见性能力（11 个，DataForSEO AI Optimization 直连，同样按响应正文 `cost` 成本价结算）：
@@ -370,6 +372,9 @@ grok 的 reserve 同日由 `$0.06` 上调为 `$0.10`（一次实测 188897 token
 原有 AISA 能力的地区/语言默认美国 (`location_code: 2840`) / 英语 (`language_code: "en"`)。
 `keyword-ideas-v1` 和 `keyword-volume-v1` 使用 `location_name`，默认
 `United States` / 英语，例如可覆盖为 `"location_name": "Germany"`、`"language_code": "de"`。
+`keyword-suggestions-v1` 与 `related-keywords-v1` 同样使用 `location_name`，默认也是
+`United States` / 英语；两者只接收一个 `keyword` 词根，输出 `keywords[]`，字段与
+`keyword-ideas-v1` 相同（`related-keywords-v1` 多一个 `depth`）。
 `ai-brand-mentions-v1` 的 target 必须写成数组对象，例如：
 
 ```json

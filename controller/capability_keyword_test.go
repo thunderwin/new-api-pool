@@ -197,15 +197,18 @@ func TestKeywordCapabilityCostPathBillingAndReserveFallback(t *testing.T) {
 	enableCapabilityConsumeLogs(t)
 
 	tests := []struct {
-		name        string
-		sourceID    string
-		fixture     string
-		wantCostUSD float64
-		reserveUSD  float64
+		name         string
+		sourceID     string
+		fixture      string
+		wantCostUSD  float64
+		reserveUSD   float64
+		keywordInput bool
 	}{
 		{name: "ideas", sourceID: "keyword-ideas-v1", fixture: "keyword-ideas.json", wantCostUSD: 0.018, reserveUSD: 0.04},
 		{name: "volume", sourceID: "keyword-volume-v1", fixture: "keyword-volume.json", wantCostUSD: 0.01212, reserveUSD: 0.04},
-		{name: "serp", sourceID: "serp-google-v1", fixture: "serp-google.json", wantCostUSD: 0.002, reserveUSD: 0.21},
+		{name: "serp", sourceID: "serp-google-v1", fixture: "serp-google.json", wantCostUSD: 0.002, reserveUSD: 0.21, keywordInput: true},
+		{name: "suggestions", sourceID: "keyword-suggestions-v1", fixture: "keyword-suggestions.json", wantCostUSD: 0.0102, reserveUSD: 0.12, keywordInput: true},
+		{name: "related", sourceID: "related-keywords-v1", fixture: "related-keywords.json", wantCostUSD: 0.0102, reserveUSD: 0.12, keywordInput: true},
 	}
 	for _, test := range tests {
 		for _, costMode := range []string{"actual", "missing", "invalid"} {
@@ -243,7 +246,7 @@ func TestKeywordCapabilityCostPathBillingAndReserveFallback(t *testing.T) {
 				manifest := cloneKeywordControllerManifest(t, test.sourceID+"-billing-test-v1", test.sourceID, upstream.URL)
 				registerWebUnlockTestManifest(t, manifest)
 				input := map[string]any{"keywords": []any{"running shoes"}}
-				if test.sourceID == "serp-google-v1" {
+				if test.keywordInput {
 					input = map[string]any{"keyword": "running shoes"}
 				}
 				ctx, recorder := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+manifest.ID, map[string]any{
@@ -364,8 +367,8 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	for _, item := range response.Data {
 		entries[item.ID] = item.Billing.MaxUSD
 	}
-	if len(entries) != 37 {
-		t.Fatalf("expected 37 directory entries, got %d", len(entries))
+	if len(entries) != 39 {
+		t.Fatalf("expected 39 directory entries, got %d", len(entries))
 	}
 	if entries["ai-answer-grok-v1"] != 0.10 ||
 		entries["ai-answer-kimi-v1"] != 0.03 ||
@@ -374,7 +377,9 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	}
 	if entries["keyword-ideas-v1"] != 0.04 ||
 		entries["keyword-volume-v1"] != 0.04 ||
-		entries["serp-google-v1"] != 0.21 {
+		entries["serp-google-v1"] != 0.21 ||
+		entries["keyword-suggestions-v1"] != 0.12 ||
+		entries["related-keywords-v1"] != 0.12 {
 		t.Fatalf("keyword capabilities have unexpected max_usd: %#v", entries)
 	}
 	if entries["ai-answer-chatgpt-v1"] != 0.20 ||
