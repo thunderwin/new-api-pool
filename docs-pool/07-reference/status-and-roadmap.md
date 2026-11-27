@@ -90,7 +90,7 @@
 
 ### 2.10 第三方 Capability
 
-2026-11-27：[`douyin-search-v1`](capability-api.md#douyin-search-v1) 已实现，待部署；TikHub 单价和真实响应字段待核对。
+2026-11-27：[`douyin-search-v1`](capability-api.md#douyin-search-v1) 已实现，待部署；2026-11-27 已用真实 Key 核对响应字段，并按 TikHub 后台实际扣费核对单价。
 
 - [x] 同步 JSON：`weather-v1`、`web-unlock-v1`、16 个 AISA 搜索/SEO 能力、
   `web-search-v1`

@@ -56,7 +56,7 @@ func TestDouyinSearchContract(t *testing.T) {
 		if n == 1 {
 			_, _ = w.Write(fixture)
 		} else {
-			fmt.Fprint(w, `{"code":200,"data":{"business_data":null,"cursor":18,"extra":{"backtrace":"synthetic-fallback"},"has_more":true}}`)
+			fmt.Fprint(w, `{"code":200,"data":{"business_data":[],"business_config":{"has_more":0}}}`)
 		}
 	}))
 	defer upstream.Close()
@@ -69,10 +69,10 @@ func TestDouyinSearchContract(t *testing.T) {
 		t.Fatalf("expected nonempty result, got %v", execErr)
 	}
 	wantItems := []map[string]any{
-		{"id": "synthetic-video-a", "desc": strings.Repeat("测🙂", 60), "author": "合成作者", "duration_s": 12.345, "likes": float64(42), "share_url": "https://share.example.invalid/video-a", "play_url": "https://play.example.invalid/high", "width": float64(1080), "height": float64(1920)},
-		{"id": "synthetic-video-b", "desc": "", "author": "", "duration_s": nil, "likes": nil, "share_url": "", "play_url": "https://play.example.invalid/default-b", "width": float64(640), "height": float64(480)},
+		{"id": "synthetic-video-a", "desc": strings.Repeat("测🙂", 60), "author": "合成作者", "duration_s": 12.345, "likes": float64(42), "share_url": "https://share.example.invalid/video-a", "play_url": "https://play.example.invalid/default-a", "width": float64(720), "height": float64(1280)},
+		{"id": "synthetic-video-b", "desc": "", "author": "", "duration_s": nil, "likes": nil, "share_url": "", "play_url": "https://play.example.invalid/faster-b", "width": float64(1280), "height": float64(720)},
 	}
-	if !reflect.DeepEqual(result.Output["items"], wantItems) || result.Output["has_more"] != float64(1) || result.Output["cursor"] != float64(18) || result.Output["search_id"] != "synthetic-next" || result.Output["backtrace"] != "synthetic-backtrace" {
+	if !reflect.DeepEqual(result.Output["items"], wantItems) || result.Output["has_more"] != 1 || result.Output["cursor"] != float64(18) || result.Output["search_id"] != "synthetic-next" || result.Output["backtrace"] != "synthetic-backtrace" {
 		t.Fatalf("unexpected search projection: %#v", result.Output)
 	}
 	// Sync requests without an upstream idempotency declaration are independent,
@@ -83,7 +83,7 @@ func TestDouyinSearchContract(t *testing.T) {
 			page, err := ExecuteSync(context.Background(), &m, map[string]any{
 				"keyword": first["keyword"], "cursor": result.Output["cursor"], "search_id": result.Output["search_id"], "backtrace": result.Output["backtrace"],
 			}, "synthetic-idempotency")
-			if err != nil || !page.Empty || page.Output["search_id"] != "" || page.Output["backtrace"] != "synthetic-fallback" || page.Output["cursor"] != float64(18) || page.Output["has_more"] != true {
+			if err != nil || !page.Empty || page.Output["search_id"] != "" || page.Output["backtrace"] != "" || page.Output["cursor"] != nil || page.Output["has_more"] != 0 {
 				t.Errorf("expected empty next page with pagination: page=%v err=%v", page, err)
 			}
 		})

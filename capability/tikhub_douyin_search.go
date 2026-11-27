@@ -3,7 +3,6 @@ package capability
 import (
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -38,7 +37,6 @@ func douyinInteger(value any) bool {
 }
 
 func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, bool, *ExecutionError) {
-	missing := &ExecutionError{Code: "missing_output_field", Message: "upstream response did not contain a required field", HTTPStatus: http.StatusBadGateway}
 	invalid := &ExecutionError{Code: "invalid_output_field", Message: "upstream response field has an invalid format", HTTPStatus: http.StatusBadGateway}
 	get := func(root any, path string) any {
 		value, _ := Lookup(root, path)
@@ -52,27 +50,26 @@ func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, boo
 		return s
 	}
 	list, exists := Lookup(raw, "$.data.business_data")
-	cursor, hasMore := get(raw, "$.data.cursor"), get(raw, "$.data.has_more")
-	if !exists || cursor == nil || hasMore == nil {
-		return nil, false, missing
-	}
-	if !douyinInteger(cursor) || !douyinHasMoreValue(hasMore) {
-		return nil, false, invalid
+	if !exists {
+		return nil, false, &ExecutionError{Code: "missing_output_field", Message: "upstream response did not contain the search results", HTTPStatus: http.StatusBadGateway}
 	}
 	entries, ok := list.([]any)
 	if !ok && list != nil {
 		return nil, false, invalid
 	}
-	searchID := text(get(raw, "$.data.search_id"))
-	if searchID == "" {
-		searchID = text(get(raw, "$.data.log_pb.impr_id"))
+	config := get(raw, "$.data.business_config")
+	cursor := get(config, "$.next_page.cursor")
+	if !douyinInteger(cursor) {
+		cursor = nil
 	}
-	backtrace := text(get(raw, "$.data.backtrace"))
-	if backtrace == "" {
-		// Some search metadata may be grouped under data.extra. Do not use
-		// params.backtrace, which would echo the current request's token.
-		backtrace = text(get(raw, "$.data.extra.backtrace"))
+	hasMore := 0
+	if more := get(config, "$.has_more"); douyinInteger(more) {
+		if n, _ := NumberValue(more); n == 1 {
+			hasMore = 1
+		}
 	}
+	searchID := text(get(config, "$.next_page.search_id"))
+	backtrace := text(get(config, "$.backtrace"))
 	items := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
 		aweme := get(entry, "$.data.aweme_info")
@@ -81,7 +78,7 @@ func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, boo
 		}
 		id := text(get(aweme, "$.aweme_id"))
 		if id == "" {
-			return nil, false, missing
+			return nil, false, invalid
 		}
 		desc := []rune(text(get(aweme, "$.desc")))
 		if len(desc) > 120 {
@@ -105,17 +102,6 @@ func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, boo
 	return map[string]any{"items": items, "cursor": cursor, "search_id": searchID, "backtrace": backtrace, "has_more": hasMore}, len(items) == 0, nil
 }
 
-func douyinHasMoreValue(value any) bool {
-	switch v := value.(type) {
-	case bool:
-		return true
-	case float64:
-		return v == 0 || v == 1
-	default:
-		return false
-	}
-}
-
 func douyinDimensions(root any, base string) (float64, float64) {
 	w, _ := Lookup(root, base+".width")
 	h, _ := Lookup(root, base+".height")
@@ -128,44 +114,30 @@ func douyinDimensions(root any, base string) (float64, float64) {
 }
 
 func douyinPlayback(video any, text func(any) string) (playURL string, width, height float64) {
-	playback := func(root any) string {
-		url, _ := Lookup(root, "$.play_addr.url_list.0")
-		return text(url)
-	}
-	variants, _ := Lookup(video, "$.bit_rate")
-	versions, _ := variants.([]any)
 	var bestResolution, bestBitrate float64
-	for _, version := range versions {
-		url := playback(version)
+	consider := func(candidate any) {
+		value, _ := Lookup(candidate, "$.play_addr.url_list.0")
+		url := text(value)
 		if url == "" {
-			continue
+			return
 		}
-		w, h := douyinDimensions(version, "$.play_addr")
+		w, h := douyinDimensions(candidate, "$.play_addr")
 		if w == 0 {
-			w, h = douyinDimensions(version, "$")
+			w, h = douyinDimensions(candidate, "$")
 		}
-		// The short edge is the resolution class (e.g. the 1080 in 1080p),
-		// independent of orientation. gear_name is a fallback for missing dimensions.
-		resolution := min(w, h)
-		if resolution == 0 {
-			gear, _ := Lookup(version, "$.gear_name")
-			prefix, _, _ := strings.Cut(text(gear), "_")
-			pixels, _ := strconv.Atoi(prefix)
-			resolution = float64(pixels)
-		}
-		rate, _ := Lookup(version, "$.bit_rate")
+		resolution := min(w, h) // Short edge, independent of orientation.
+		rate, _ := Lookup(candidate, "$.bit_rate")
 		bitrate, _ := NumberValue(rate)
 		if playURL == "" || resolution > bestResolution || (resolution == bestResolution && bitrate > bestBitrate) {
 			playURL, width, height = url, w, h
 			bestResolution, bestBitrate = resolution, bitrate
 		}
 	}
-	if playURL == "" {
-		playURL = playback(video)
-		width, height = douyinDimensions(video, "$.play_addr")
-	}
-	if width == 0 {
-		width, height = douyinDimensions(video, "$")
+	consider(video)
+	variants, _ := Lookup(video, "$.bit_rate")
+	versions, _ := variants.([]any)
+	for _, version := range versions {
+		consider(version)
 	}
 	return
 }

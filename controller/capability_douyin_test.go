@@ -36,14 +36,14 @@ func TestDouyinSearchSettlement(t *testing.T) {
 		cost                  float64
 	}{
 		{"success", string(fixture), "", 200, 200, 0.01},
-		{"empty", `{"code":200,"data":{"business_data":[],"cursor":0,"has_more":0}}`, "", 200, 200, 0},
-		{"only-cards", `{"code":200,"data":{"business_data":[{"data":{"card":true}}],"cursor":4,"has_more":1}}`, "", 200, 200, 0},
+		{"empty", `{"code":200,"data":{"business_data":[]}}`, "", 200, 200, 0},
+		{"only-cards", `{"code":200,"data":{"business_data":[{"type":2,"data":{"card":true}}],"business_config":{"has_more":1}}}`, "", 200, 200, 0},
 		{"rejected", `{"message":"` + secret + `"}`, "invalid_request", 422, 400, 0},
 		{"failed", `{"message":"` + secret + `"}`, "upstream_unavailable", 500, 503, 0},
 		{"business-failed", `{"code":500,"message":"` + secret + `"}`, "upstream_unavailable", 200, 503, 0},
 		{"deadline", "", "upstream_timeout", 0, 504, 0},
 		{"oversize", strings.Repeat("x", 4097), "upstream_response_too_large", 200, 502, 0},
-		{"missing", `{"code":200,"data":{"cursor":0,"has_more":0}}`, "missing_output_field", 200, 502, 0},
+		{"missing", `{"code":200,"data":{"business_config":{"has_more":0}}}`, "missing_output_field", 200, 502, 0},
 		{"invalid-keyword", "", "invalid_request", 0, 400, 0},
 		{"missing-key", "", "credential_error", 0, 500, 0},
 	} {
@@ -100,9 +100,14 @@ func TestDouyinSearchSettlement(t *testing.T) {
 			} else if response["cost_usd"] != tc.cost {
 				t.Fatalf("wanted cost %v, got %v", tc.cost, response["cost_usd"])
 			}
-			if tc.name == "only-cards" {
+			if tc.name == "empty" || tc.name == "only-cards" {
 				output, ok := response["output"].(map[string]any)
-				if !ok || output["search_id"] != "" || output["backtrace"] != "" || output["has_more"] != float64(1) {
+				cursor, hasCursor := output["cursor"]
+				wantMore := float64(0)
+				if tc.name == "only-cards" {
+					wantMore = 1
+				}
+				if !ok || !hasCursor || cursor != nil || output["search_id"] != "" || output["backtrace"] != "" || output["has_more"] != wantMore {
 					t.Fatalf("unexpected pagination for missing tokens: %#v", output)
 				}
 			}
