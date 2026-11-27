@@ -20,6 +20,8 @@ const (
 
 type Manifest struct {
 	ID          string `json:"id"`
+	Version     string `json:"manifest_version,omitempty"`
+	HTTPAdapter string `json:"http_adapter,omitempty"`
 	Provider    string `json:"provider"`
 	Mode        string `json:"mode"`
 	Description string `json:"description"`
@@ -158,6 +160,7 @@ type BillingSpec struct {
 type LimitsSpec struct {
 	Timeout          string `json:"timeout"`
 	MaxResponseBytes int64  `json:"max_response_bytes"`
+	DisableRedirects bool   `json:"disable_redirects,omitempty"`
 }
 
 type RetrySpec struct {
@@ -240,6 +243,14 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest %s: %w", m.ID, err)
 	}
 	nativeName := strings.TrimSpace(m.Native)
+	if m.HTTPAdapter != "" {
+		if _, ok := httpSyncAdapters[m.HTTPAdapter]; !ok || m.Mode != ModeSync || nativeName != "" || m.Request == nil || m.Response == nil {
+			return fmt.Errorf("manifest %s: http_adapter requires a registered sync HTTP adapter, request and response", m.ID)
+		}
+		if len(m.Response.Output) != 0 || len(m.Response.Collections) != 0 {
+			return fmt.Errorf("manifest %s: http_adapter owns output mapping", m.ID)
+		}
+	}
 	if nativeName != "" {
 		if err := m.validateNative(nativeName); err != nil {
 			return err
@@ -250,7 +261,7 @@ func (m *Manifest) Validate() error {
 			if strings.TrimSpace(m.Endpoint) == "" {
 				return fmt.Errorf("manifest %s: sync endpoint is required", m.ID)
 			}
-			if m.Response == nil || (len(m.Response.Output) == 0 && len(m.Response.Collections) == 0) {
+			if m.Response == nil || (m.HTTPAdapter == "" && len(m.Response.Output) == 0 && len(m.Response.Collections) == 0) {
 				return fmt.Errorf("manifest %s: sync response.output or response.collections is required", m.ID)
 			}
 		}
@@ -468,8 +479,8 @@ func (a *AuthSpec) Validate() error {
 		if ref == "" {
 			return fmt.Errorf("auth.%s is required", field)
 		}
-		if !capabilityEnvPattern.MatchString(ref) {
-			return fmt.Errorf("auth.%s must match CAPABILITY_[A-Z0-9_]+", field)
+		if !capabilityEnvPattern.MatchString(ref) && !(field == "secret_ref" && typeName == "bearer" && ref == "TIKHUB_API_KEY") {
+			return fmt.Errorf("auth.%s must match CAPABILITY_[A-Z0-9_]+ or be an approved Bearer credential", field)
 		}
 		return nil
 	}

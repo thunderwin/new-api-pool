@@ -1,4 +1,4 @@
-# 第三方 Capability API（2026-11-25 更新）
+# 第三方 Capability API（2026-11-27 更新）
 
 > 状态：**Phase 0 同步 JSON + Phase 1 异步任务基础链路 + Bright Data / AISA / DeepSeek 能力已实现**。
 > 规则见仓库根目录 [`RULES.md`](../../RULES.md)。
@@ -115,7 +115,8 @@ POST /v1/capabilities/weather-v1
 ### 鉴权
 
 Manifest 的 `auth.type` 支持 `bearer`、`header`、`query`、`basic`。凭证引用只写变量名，
-`secret_ref` 和 `password_ref` 必须匹配 `CAPABILITY_[A-Z0-9_]+`。
+`secret_ref` 和 `password_ref` 必须匹配 `CAPABILITY_[A-Z0-9_]+`；Bearer 的
+`secret_ref` 也允许 `TIKHUB_API_KEY`。
 
 HTTP Basic 用两个服务端变量，执行器自行拼出
 `Authorization: Basic base64(username:password)`：
@@ -188,6 +189,7 @@ GET /v1/tasks/task_...
 
 | ID | 上游 | 模式 | 计费 | 说明 |
 |---|---|---|---|---|
+| `douyin-search-v1` | TikHub | 同步 | 暂定 $0.01 / 次（待核实）；空页免费 | 关键词 → 精简视频列表与分页；已实现，待部署 |
 | `weather-v1` | Open-Meteo | 同步 | $0 / 次 | 坐标 → 当前温度/风速，无需 key |
 | `ssl-analyze-v1` | SSL Labs | 异步 | $0 / 次 | host → 提交分析、轮询状态、返回 endpoints |
 | `web-unlock-v1` | Bright Data Web Unlocker | 同步 | $0.003 / 次 | 抓取允许的 Wayfair 页面，返回目标状态码与 HTML |
@@ -229,6 +231,18 @@ GET /v1/tasks/task_...
 | `ai-answer-doubao-v1` | 本站 `/v1/responses`（`relay`） | 同步 | `total_tokens` × $0.0000005，max $0.03 | doubao-seed-2.1-pro **不联网的模型记忆问答**，反映模型自身知识，不返回引用 |
 
 Manifest 在 `capability/manifests/`，编译时嵌入二进制。
+
+### `douyin-search-v1`
+
+状态：已实现，待部署。
+
+- 入口：`POST /v1/capabilities/douyin-search-v1`，同步 JSON。`input.keyword` 必填，1–50 个 Unicode 字符，不接受全空白；`cursor` 为非负整数（默认 `0`），`search_id` 为字符串（默认 `""`，最多 4096 字节）。两者翻页时使用上一页返回值。
+- 上游：`POST https://api.tikhub.io/api/v1/douyin/search/fetch_video_search_v2`，Bearer 取自服务端 `TIKHUB_API_KEY`。固定 `sort_type`、`publish_time`、`filter_duration` 为 `"0"`，`content_type` 为 `"1"`，`backtrace` 为 `""`；不转发客户端的其他输入。
+- `output.items[]` 只保留 `id`、`desc`（最多 120 字符）、`author`、`duration_s`（毫秒 ÷ 1000）、`likes`、`share_url`、`play_url`、`width`、`height`。跳过没有 `aweme_info` 的条目；仅返回链接，不代下载。优先选有首个播放链接的最高分辨率 `bit_rate`（同分辨率按码率），没有则使用 `video.play_addr.url_list[0]`。缺少可选项时，文本/链接为空串、时长/点赞数为 `null`、未知宽高为 `0`。
+- 分页输出 `cursor`、`search_id`、`has_more`；`search_id` 优先读取 `data.search_id`，其次 `data.log_pb.impr_id`；末页缺失时为空串。`has_more` 保留上游的 0/1 或布尔值。**待用真实 Key 核对字段**，尤其是分页路径、固定空 `backtrace` 对翻页的影响及清晰度字段。目前按 [TikHub OpenAPI](https://api.tikhub.io/openapi.json) 和合成 fixture 验证。
+- `per_call`，暂定 **$0.01 / 次（待核实）**。2026-11-27 查询 [TikHub 官方价格页](https://tikhub.io/pricing) 仅列出 $0.001–$0.01 的范围，官方 `calculate_price` 端点查单价需鉴权，未取得此端点的单独报价。`items: []` 成功且免费（包括仅有非视频项）；上游失败按现有 `per_call` 规则全额退款。
+- 30 秒总超时，8 MiB 响应上限，不自动重试，不跟随重定向。固定 HTTPS 目标走共享出站检查，不在中转站访问返回的链接；未核实固定出口 IP 要求。每进程最多 8 个在途请求；连续 8 次服务端失败熔断 30 秒，之后放行单次探测。无同步幂等重放，不转发 `idempotency_key`；重复请求每次独立结算。
+- `response.collections` 只投影路径，不能做过滤、时长换算或清晰度排序。遵守 RULES R13：付费 API 不冒充 `native`，由 Manifest 的 `http_adapter` 绑定 Go 校验和投影，仍走统一 HTTP 执行器、预扣与结算。
 
 ### `web-unlock-v1`
 

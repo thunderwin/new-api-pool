@@ -69,6 +69,7 @@ func capabilityBillingPayload(m *capability.Manifest) gin.H {
 // ExecuteCapability runs a synchronous capability. It uses the same sk- token
 // auth, user balance and consume logs as the relay routes.
 func ExecuteCapability(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	m, ok := capability.Get(c.Param("capability"))
 	if !ok || m.Mode != capability.ModeSync {
 		respondCapabilityError(c, &capability.ExecutionError{
@@ -118,7 +119,7 @@ func ExecuteCapability(c *gin.Context) {
 		return
 	}
 
-	actualQuota, usageUnit, usageQty, usageSource, usageErr := capabilitySyncUsage(m, priceData, result.Raw, result.Headers)
+	actualQuota, usageUnit, usageQty, usageSource, usageErr := capabilitySyncUsage(m, priceData, result.Raw, result.Headers, result.Empty)
 	if usageErr != nil {
 		usageErr.ResponseReceived = true
 		usageErr.RequestWritten = true
@@ -427,7 +428,7 @@ func GetCapabilityTask(c *gin.Context) {
 				UsePrice:       true,
 				GroupRatioInfo: types.GroupRatioInfo{GroupRatio: data.Billing.GroupRatio},
 			}
-			actualQuota, _, _, _, usageErr := capabilitySyncUsage(m, priceData, poll.Raw, nil)
+			actualQuota, _, _, _, usageErr := capabilitySyncUsage(m, priceData, poll.Raw, nil, false)
 			if usageErr != nil {
 				task.Status = model.TaskStatusFailure
 				task.FailReason = "upstream usage is unknown"
@@ -552,7 +553,7 @@ func prepareCapabilityBilling(c *gin.Context, m *capability.Manifest, input map[
 	return info, priceData, nil
 }
 
-func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw map[string]any, headers http.Header) (int, string, float64, string, *capability.ExecutionError) {
+func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw map[string]any, headers http.Header, empty bool) (int, string, float64, string, *capability.ExecutionError) {
 	unit := m.Billing.Unit
 	if unit == "" {
 		if m.Billing.Type == capability.BillingPerCall {
@@ -561,7 +562,7 @@ func capabilitySyncUsage(m *capability.Manifest, priceData *types.PriceData, raw
 			unit = "unit"
 		}
 	}
-	if m.Response != nil && m.Response.Success.EmptyResponse(raw) {
+	if empty || (m.Response != nil && m.Response.Success.EmptyResponse(raw)) {
 		return 0, unit, 0, "empty_response", nil
 	}
 	if m.Billing.Type == capability.BillingPerCall {
@@ -658,7 +659,7 @@ func settleCapabilityExecutionFailure(
 	if receivedSuccess {
 		var usedQuota int
 		var usedQuantity float64
-		usedQuota, usedUnit, usedQuantity, source, usageErr := capabilitySyncUsage(m, priceData, execErr.BillingRaw, execErr.BillingHeaders)
+		usedQuota, usedUnit, usedQuantity, source, usageErr := capabilitySyncUsage(m, priceData, execErr.BillingRaw, execErr.BillingHeaders, false)
 		if usageErr == nil {
 			quota = usedQuota
 			unit = usedUnit

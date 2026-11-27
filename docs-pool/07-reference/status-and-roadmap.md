@@ -88,7 +88,9 @@
   - 08-security（凭证 / 暴露面 / 应急响应）
   - 09-contributing（commit / PR / 风格）
 
-### 2.10 第三方 Capability（2026-11-04）
+### 2.10 第三方 Capability
+
+2026-11-27：[`douyin-search-v1`](capability-api.md#douyin-search-v1) 已实现，待部署；TikHub 单价和真实响应字段待核对。
 
 - [x] 同步 JSON：`weather-v1`、`web-unlock-v1`、16 个 AISA 搜索/SEO 能力、
   `web-search-v1`

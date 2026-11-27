@@ -367,8 +367,8 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 	for _, item := range response.Data {
 		entries[item.ID] = item.Billing.MaxUSD
 	}
-	if len(entries) != 39 {
-		t.Fatalf("expected 39 directory entries, got %d", len(entries))
+	if len(entries) != 40 {
+		t.Fatalf("expected 40 directory entries, got %d", len(entries))
 	}
 	if entries["ai-answer-grok-v1"] != 0.10 ||
 		entries["ai-answer-kimi-v1"] != 0.03 ||
@@ -400,6 +400,7 @@ func TestCapabilityDirectoryIncludesDataForSEOKeywordCapabilitiesAndExistingEntr
 		"ssl-analyze-v1",
 		"web-unlock-v1",
 		"web-search-v1",
+		"douyin-search-v1",
 		"geo-site-audit-v1",
 		"domain-rank-overview-v1",
 		"backlinks-summary-v1",

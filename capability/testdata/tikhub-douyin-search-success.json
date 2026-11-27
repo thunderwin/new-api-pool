@@ -1,0 +1,32 @@
+{
+  "code": 200,
+  "request_id": "synthetic-request",
+  "data": {
+    "cursor": 18,
+    "has_more": 1,
+    "log_pb": {"impr_id": "synthetic-next"},
+    "business_data": [
+      {"type": 2, "data": {"card": "not a video"}},
+      {"data": {"aweme_info": {
+        "aweme_id": "synthetic-video-a",
+        "desc": "合成视频",
+        "author": {"nickname": "合成作者", "uid": "not projected"},
+        "statistics": {"digg_count": 42},
+        "share_url": "https://share.example.invalid/video-a",
+        "video": {
+          "duration": 12345, "width": 720, "height": 1280,
+          "play_addr": {"url_list": ["https://play.example.invalid/default-a"]},
+          "bit_rate": [
+            {"bit_rate": 9000000, "play_addr": {"width": 720, "height": 1280, "url_list": ["https://play.example.invalid/low"]}},
+            {"bit_rate": 3000000, "play_addr": {"width": 1080, "height": 1920, "url_list": ["https://play.example.invalid/high", "https://play.example.invalid/mirror"]}},
+            {"bit_rate": 6000000, "play_addr": {"width": 2160, "height": 3840, "url_list": []}}
+          ]
+        }
+      }}},
+      {"data": {"aweme_info": {
+        "aweme_id": "synthetic-video-b",
+        "video": {"width": 640, "height": 480, "play_addr": {"url_list": ["https://play.example.invalid/default-b"]}}
+      }}}
+    ]
+  }
+}
