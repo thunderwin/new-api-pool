@@ -4,6 +4,8 @@
   "data": {
     "cursor": 18,
     "has_more": 1,
+    "backtrace": "synthetic-backtrace",
+    "extra": {"backtrace": "not-the-primary-token"},
     "log_pb": {"impr_id": "synthetic-next"},
     "business_data": [
       {"type": 2, "data": {"card": "not a video"}},

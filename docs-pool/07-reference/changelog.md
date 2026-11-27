@@ -17,7 +17,7 @@
 
 > 状态：已实现，待部署。
 
-- 新增 TikHub 抖音视频关键词搜索，返回精简视频列表和分页字段。非空结果按次收费，暂定 $0.01（待核实）；空页不收费，失败退款。
+- 新增 TikHub 抖音视频关键词搜索，返回精简视频列表和分页字段，支持回传 `backtrace`；缺失的 `search_id` 或 `backtrace` 返回空串。非空结果按次收费，暂定 $0.01（待核实）；空页不收费，失败退款。
 - Manifest 投影无法过滤、换算时长或选择清晰度；用 Go HTTP adapter 转换，不新增路由、不绕开统一执行器。测试使用合成样例，待用真实 Key 核对字段。
 - Compose 显式透传 `CAPABILITY_TIKHUB_API_KEY`；密钥脚本沿用 `CAPABILITY_*` 规则及 Bright Data 默认用法。
 

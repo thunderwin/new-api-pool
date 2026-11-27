@@ -48,7 +48,7 @@ func TestDouyinSearchContract(t *testing.T) {
 			for k, v := range first {
 				expected[k] = v
 			}
-			expected["cursor"], expected["search_id"] = float64(18), "synthetic-next"
+			expected["cursor"], expected["search_id"], expected["backtrace"] = float64(18), "synthetic-next", "synthetic-backtrace"
 		}
 		if !reflect.DeepEqual(body, expected) {
 			t.Error("unexpected upstream search JSON")
@@ -56,14 +56,14 @@ func TestDouyinSearchContract(t *testing.T) {
 		if n == 1 {
 			_, _ = w.Write(fixture)
 		} else {
-			fmt.Fprint(w, `{"code":200,"data":{"business_data":null,"cursor":18,"search_id":"synthetic-final","has_more":0}}`)
+			fmt.Fprint(w, `{"code":200,"data":{"business_data":null,"cursor":18,"extra":{"backtrace":"synthetic-fallback"},"has_more":true}}`)
 		}
 	}))
 	defer upstream.Close()
 	m := *embedded
 	m.Endpoint = upstream.URL + path
 	result, execErr := ExecuteSync(context.Background(), &m, map[string]any{
-		"keyword": first["keyword"], "content_type": "2", "backtrace": "not allowed", "Authorization": "not allowed",
+		"keyword": first["keyword"], "content_type": "2", "Authorization": "not allowed",
 	}, "synthetic-idempotency")
 	if execErr != nil || result.Empty {
 		t.Fatalf("expected nonempty result, got %v", execErr)
@@ -72,7 +72,7 @@ func TestDouyinSearchContract(t *testing.T) {
 		{"id": "synthetic-video-a", "desc": strings.Repeat("测🙂", 60), "author": "合成作者", "duration_s": 12.345, "likes": float64(42), "share_url": "https://share.example.invalid/video-a", "play_url": "https://play.example.invalid/high", "width": float64(1080), "height": float64(1920)},
 		{"id": "synthetic-video-b", "desc": "", "author": "", "duration_s": nil, "likes": nil, "share_url": "", "play_url": "https://play.example.invalid/default-b", "width": float64(640), "height": float64(480)},
 	}
-	if !reflect.DeepEqual(result.Output["items"], wantItems) || result.Output["has_more"] != float64(1) || result.Output["cursor"] != float64(18) || result.Output["search_id"] != "synthetic-next" {
+	if !reflect.DeepEqual(result.Output["items"], wantItems) || result.Output["has_more"] != float64(1) || result.Output["cursor"] != float64(18) || result.Output["search_id"] != "synthetic-next" || result.Output["backtrace"] != "synthetic-backtrace" {
 		t.Fatalf("unexpected search projection: %#v", result.Output)
 	}
 	// Sync requests without an upstream idempotency declaration are independent,
@@ -81,9 +81,9 @@ func TestDouyinSearchContract(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			page, err := ExecuteSync(context.Background(), &m, map[string]any{
-				"keyword": first["keyword"], "cursor": result.Output["cursor"], "search_id": result.Output["search_id"],
+				"keyword": first["keyword"], "cursor": result.Output["cursor"], "search_id": result.Output["search_id"], "backtrace": result.Output["backtrace"],
 			}, "synthetic-idempotency")
-			if err != nil || !page.Empty || page.Output["search_id"] != "synthetic-final" || page.Output["cursor"] != float64(18) || page.Output["has_more"] != float64(0) {
+			if err != nil || !page.Empty || page.Output["search_id"] != "" || page.Output["backtrace"] != "synthetic-fallback" || page.Output["cursor"] != float64(18) || page.Output["has_more"] != true {
 				t.Errorf("expected empty next page with pagination: page=%v err=%v", page, err)
 			}
 		})
@@ -91,6 +91,27 @@ func TestDouyinSearchContract(t *testing.T) {
 	wg.Wait()
 	if calls.Load() != 5 {
 		t.Fatalf("expected one upstream call per invocation, got %d", calls.Load())
+	}
+}
+
+func TestDouyinSearchBacktraceValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   any
+		invalid bool
+	}{
+		{"empty", "", false},
+		{"max-bytes", strings.Repeat("测", 1365) + "x", false},
+		{"too-long", strings.Repeat("测", 1366), true},
+		{"not-a-string", 1, true},
+		{"null", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateDouyinInput(map[string]any{"keyword": "测试", "backtrace": tc.value})
+			if (err != nil) != tc.invalid || (err != nil && err.Code != "invalid_request") {
+				t.Fatalf("unexpected validation result: %v", err)
+			}
+		})
 	}
 }
 

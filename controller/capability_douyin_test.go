@@ -37,7 +37,7 @@ func TestDouyinSearchSettlement(t *testing.T) {
 	}{
 		{"success", string(fixture), "", 200, 200, 0.01},
 		{"empty", `{"code":200,"data":{"business_data":[],"cursor":0,"has_more":0}}`, "", 200, 200, 0},
-		{"only-cards", `{"code":200,"data":{"business_data":[{"data":{"card":true}}],"cursor":4,"has_more":1,"search_id":"synthetic-next"}}`, "", 200, 200, 0},
+		{"only-cards", `{"code":200,"data":{"business_data":[{"data":{"card":true}}],"cursor":4,"has_more":1}}`, "", 200, 200, 0},
 		{"rejected", `{"message":"` + secret + `"}`, "invalid_request", 422, 400, 0},
 		{"failed", `{"message":"` + secret + `"}`, "upstream_unavailable", 500, 503, 0},
 		{"business-failed", `{"code":500,"message":"` + secret + `"}`, "upstream_unavailable", 200, 503, 0},
@@ -99,6 +99,12 @@ func TestDouyinSearchSettlement(t *testing.T) {
 				}
 			} else if response["cost_usd"] != tc.cost {
 				t.Fatalf("wanted cost %v, got %v", tc.cost, response["cost_usd"])
+			}
+			if tc.name == "only-cards" {
+				output, ok := response["output"].(map[string]any)
+				if !ok || output["search_id"] != "" || output["backtrace"] != "" || output["has_more"] != float64(1) {
+					t.Fatalf("unexpected pagination for missing tokens: %#v", output)
+				}
 			}
 			wantQuota := int(tc.cost * common.QuotaPerUnit)
 			if wantCalls != 0 {

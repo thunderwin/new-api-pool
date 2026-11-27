@@ -13,15 +13,15 @@
     "body": {
       "keyword": "$.input.keyword",
       "cursor": "$.input.cursor",
-      "search_id": "$.input.search_id"
+      "search_id": "$.input.search_id",
+      "backtrace": "$.input.backtrace"
     },
-    "defaults": {"cursor": 0, "search_id": ""},
+    "defaults": {"cursor": 0, "search_id": "", "backtrace": ""},
     "consts": {
       "sort_type": "0",
       "publish_time": "0",
       "filter_duration": "0",
-      "content_type": "1",
-      "backtrace": ""
+      "content_type": "1"
     }
   },
   "response": {

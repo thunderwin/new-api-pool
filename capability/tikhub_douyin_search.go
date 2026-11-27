@@ -19,9 +19,11 @@ func validateDouyinInput(input map[string]any) *ExecutionError {
 	if cursor, exists := input["cursor"]; exists && !douyinInteger(cursor) {
 		return invalid("cursor must be a non-negative integer")
 	}
-	if id, exists := input["search_id"]; exists {
-		if s, ok := id.(string); !ok || len(s) > 4096 {
-			return invalid("search_id must be a string of at most 4096 bytes")
+	for _, field := range []string{"search_id", "backtrace"} {
+		if value, exists := input[field]; exists {
+			if s, ok := value.(string); !ok || len(s) > 4096 {
+				return invalid(field + " must be a string of at most 4096 bytes")
+			}
 		}
 	}
 	return nil
@@ -65,8 +67,11 @@ func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, boo
 	if searchID == "" {
 		searchID = text(get(raw, "$.data.log_pb.impr_id"))
 	}
-	if (hasMore == true || hasMore == float64(1)) && searchID == "" {
-		return nil, false, missing
+	backtrace := text(get(raw, "$.data.backtrace"))
+	if backtrace == "" {
+		// Some search metadata may be grouped under data.extra. Do not use
+		// params.backtrace, which would echo the current request's token.
+		backtrace = text(get(raw, "$.data.extra.backtrace"))
 	}
 	items := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
@@ -97,7 +102,7 @@ func projectDouyinSearch(raw map[string]any, secret string) (map[string]any, boo
 			"play_url": playURL, "width": width, "height": height,
 		})
 	}
-	return map[string]any{"items": items, "cursor": cursor, "search_id": searchID, "has_more": hasMore}, len(items) == 0, nil
+	return map[string]any{"items": items, "cursor": cursor, "search_id": searchID, "backtrace": backtrace, "has_more": hasMore}, len(items) == 0, nil
 }
 
 func douyinHasMoreValue(value any) bool {
