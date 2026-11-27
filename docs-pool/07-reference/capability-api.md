@@ -188,7 +188,7 @@ GET /v1/tasks/task_...
 
 | ID | 上游 | 模式 | 计费 | 说明 |
 |---|---|---|---|---|
-| `douyin-search-v1` | TikHub | 同步 | $0.01/次；空页免费 | 关键词 → 精简视频列表与分页；已实现，待部署 |
+| `douyin-search-v1` | TikHub | 同步 | $0.01/次；空页免费 | 关键词 → 精简视频列表与分页；2026-11-27 已部署 |
 | `weather-v1` | Open-Meteo | 同步 | $0 / 次 | 坐标 → 当前温度/风速，无需 key |
 | `ssl-analyze-v1` | SSL Labs | 异步 | $0 / 次 | host → 提交分析、轮询状态、返回 endpoints |
 | `web-unlock-v1` | Bright Data Web Unlocker | 同步 | $0.003 / 次 | 抓取允许的 Wayfair 页面，返回目标状态码与 HTML |

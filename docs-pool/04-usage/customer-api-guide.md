@@ -305,7 +305,7 @@ curl https://api.tokwork.com/v1/capabilities \
 | `weather-v1` | 同步 | **必填** `latitude`、`longitude`；可选 `current`、`timezone` | `time`、`temperature_2m`、`wind_speed_10m` | 免费 |
 | `ssl-analyze-v1` | 异步 | `host`（域名） | 各 endpoint 的 TLS 评级详情 | 免费 |
 | `web-unlock-v1` | 同步 | **必填** `url`；仅限 Wayfair 四个主域名及子域名的 HTTPS 页面 | `status`、`html` | $0.003 / 次 |
-| `douyin-search-v1` | 同步（已实现，待部署） | **必填** `keyword`（1–50 字符）；可选 `cursor`（默认 `0`）、`search_id`、`backtrace`（均默认 `""`，各最多 4096 字节） | 精简 `items[]` 与 `cursor`、`search_id`、`backtrace`、`has_more` | $0.01/次；空页免费 |
+| `douyin-search-v1` | 同步 | **必填** `keyword`（1–50 字符）；可选 `cursor`（默认 `0`）、`search_id`、`backtrace`（均默认 `""`，各最多 4096 字节） | 精简 `items[]` 与 `cursor`、`search_id`、`backtrace`、`has_more` | $0.01/次；空页免费 |
 | `web-search-v1` | 同步 | **必填** `query`；可选 `count`（默认 8，最大 20） | `results[]`：`title`、`url`、`snippet`、`summary`、`site_name`、`date` | $0.001 / 次；空结果免费 |
 | `geo-site-audit-v1` | 同步 | **必填** `url`（公开站点）；可选 `pages`（最多 10 个）、`max_pages`（默认 8）、`training_policy` | `summary`、`robots`、`pages[]`、`checks[]`、`notes[]` | 免费 |
 
@@ -444,7 +444,7 @@ curl https://api.tokwork.com/v1/capabilities/web-unlock-v1 \
 - `html` 最大 8 MiB，单次超时 90 秒。
 - 只有目标页 HTTP `200` 且正文非空才计费；Bright Data 错误、目标非 200、空正文都自动退款。
 
-**抖音视频搜索**（`douyin-search-v1`，已实现，待部署）：部署后向
+**抖音视频搜索**（`douyin-search-v1`，2026-11-27 上线）：向
 `POST /v1/capabilities/douyin-search-v1` 发送 `{"input":{"keyword":"创意布景"}}`，
 使用中转站 API token 鉴权，不需要 TikHub Key。`output.items[]` 的字段为
 `id`、`desc`、`author`、`duration_s`、`likes`、`share_url`、`play_url`、`width`、`height`。

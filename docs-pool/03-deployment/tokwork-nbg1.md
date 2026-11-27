@@ -215,7 +215,7 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
 | `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 与重建后的容器内均已设置） | **是** |
-| `CAPABILITY_TIKHUB_API_KEY` | TikHub Bearer API key，供 `douyin-search-v1` 使用（已实现，待部署） | **是** |
+| `CAPABILITY_TIKHUB_API_KEY` | TikHub Bearer API key，供 `douyin-search-v1` 使用（2026-11-27 已设置并部署） | **是** |
 | `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
 | `CAPABILITY_DATAFORSEO_LOGIN` | DataForSEO API login，供三个直连关键词能力使用 | **是** |
 | `CAPABILITY_DATAFORSEO_PASSWORD` | DataForSEO API password，供三个直连关键词能力使用 | **是** |
@@ -671,6 +671,23 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | 重建窗口 | `09:20:58Z` → `09:21:10Z` healthy |
 | 二进制 SHA-256 前缀 | `0f26ac8c1b28`，容器内相同 |
 | 健康 | `new-api-app` healthy；`/api/status` 200 |
+| 回滚 | 未触发 |
+
+#### 2026-11-27 抖音视频搜索 `douyin-search-v1`（已部署）
+
+> 以下为已核实事实。换二进制，并更新 compose（新增 `CAPABILITY_TIKHUB_API_KEY` 透传）和 `.env`（changelog v0.6.20）。
+
+| 项 | 值 |
+|---|---|
+| 部署前核对 | 服务器二进制 SHA-256 前缀 `0f26ac8c1b28`，与上一条记录一致 |
+| 回滚备份 | `new-api.bak-20261127-031757`、`docker-compose.yml.bak-20261127-031757`、`.env.bak-20261127-031757` |
+| 二进制 SHA-256 前缀 | `f81ae6f53fdd`，容器内 `/new-api` 相同 |
+| compose | 与上一版只差一行 `CAPABILITY_TIKHUB_API_KEY` 透传 |
+| 密钥 | 用 `set-capability-secret.sh CAPABILITY_TIKHUB_API_KEY` 从本地文件 stdin 写入；容器内「已设置」，未输出值。脚本随后 `docker compose up -d new-api` |
+| 重建窗口 | `03:19:43Z` → `03:19:48Z` 容器启动，约 11 秒后 healthy |
+| 健康 | `new-api-app` healthy；`/api/status` 200；启动后日志无 panic/fatal |
+| 实测 | 用运维自用 key 经公网 `POST /v1/capabilities/douyin-search-v1` 调用一次（关键词「家具厂 开料 车间」）：能力目录含 `douyin-search-v1`；返回 7 条视频（均 720×1280）、`has_more=1`、`cursor=8`，`search_id`、`backtrace` 非空；`cost_usd=0.01` |
+| 插曲 | 第一次上传因本机 shell 变量未分词，SSH 认证连续失败，服务器暂时拒绝本机 22 端口约 10 分钟；期间服务未受影响，未改动任何文件 |
 | 回滚 | 未触发 |
 
 ## 8.5 上游渠道：apimaster 文生图（2026-10-10 接入并实测）
