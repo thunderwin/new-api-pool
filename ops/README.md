@@ -21,7 +21,7 @@
 | `deploy/gen-env.sh` | **在服务器本地**生成 `.env`（PG/Redis 密码、`SESSION_SECRET`、`CRYPTO_SECRET`），密钥不出机器 |
 | `deploy/backup.sh` | 每日 `pg_dump` → gzip → 完整性自检 → 清理过期 → 可选 rclone 上传 R2 |
 | `deploy/setup-rclone.sh` | 交互式配置 rclone → Cloudflare R2（`read -s` 读密钥，不落 shell history），写完当场连通自检 |
-| `deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量或 `TIKHUB_API_KEY`（默认 Bright Data key）；`read -rs` 读入后经 SSH stdin 传到服务器，原子更新 `.env` 并重建 `new-api` |
+| `deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量（默认 Bright Data key）；`read -rs` 读入后经 SSH stdin 传到服务器，原子更新 `.env` 并重建 `new-api` |
 | `reconcile-capability-aisa.py` | 只读核对 AISA 每日实际扣费与中转站日志成本；密钥和数据库凭证只在容器内使用 |
 
 ## 完整流程
@@ -62,7 +62,7 @@ ssh root@<ip> 'cd /opt/new-api-pool && chmod +x *.sh && ./gen-env.sh && docker c
    ./ops/deploy/set-capability-secret.sh
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
-   ./ops/deploy/set-capability-secret.sh TIKHUB_API_KEY
+   ./ops/deploy/set-capability-secret.sh CAPABILITY_TIKHUB_API_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_RELAY_SELF_KEY
    ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY --dry-run
    ./ops/deploy/set-capability-secret.sh --dry-run

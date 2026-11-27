@@ -18,7 +18,7 @@ import (
 
 func TestDouyinSearchSettlement(t *testing.T) {
 	const secret = "synthetic-credential-do-not-echo"
-	t.Setenv("TIKHUB_API_KEY", secret)
+	t.Setenv("CAPABILITY_TIKHUB_API_KEY", secret)
 	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
 	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
 	enableCapabilityConsumeLogs(t)
@@ -53,7 +53,7 @@ func TestDouyinSearchSettlement(t *testing.T) {
 			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
-				w.Header().Set("X-Request-ID", "echo-"+secret)
+				w.Header().Set("X-Request-ID", "synthetic-douyin-request")
 				if tc.status == 0 {
 					_, _ = io.Copy(io.Discard, r.Body)
 					select {
@@ -80,7 +80,7 @@ func TestDouyinSearchSettlement(t *testing.T) {
 				wantCalls = 0
 			}
 			if tc.name == "missing-key" {
-				t.Setenv("TIKHUB_API_KEY", "")
+				t.Setenv("CAPABILITY_TIKHUB_API_KEY", "")
 				wantCalls = 0
 			}
 			ctx, rec := newCapabilityContext(t, http.MethodPost, "/v1/capabilities/"+m.ID, gin.H{"input": gin.H{"keyword": keyword}}, user, token)

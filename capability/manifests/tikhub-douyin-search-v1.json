@@ -1,13 +1,12 @@
 {
   "id": "douyin-search-v1",
-  "manifest_version": "1.0.0",
   "provider": "tikhub",
   "mode": "sync",
   "http_adapter": "tikhub-douyin-search",
   "description": "Search Douyin videos by keyword. Empty video pages are free.",
   "endpoint": "https://api.tikhub.io/api/v1/douyin/search/fetch_video_search_v2",
   "method": "POST",
-  "auth": {"type": "bearer", "secret_ref": "TIKHUB_API_KEY"},
+  "auth": {"type": "bearer", "secret_ref": "CAPABILITY_TIKHUB_API_KEY"},
   "request": {
     "content_type": "application/json",
     "required": ["keyword"],
@@ -36,6 +35,6 @@
     }
   },
   "billing": {"type": "per_call", "unit": "call", "price_usd": 0.01},
-  "limits": {"timeout": "30s", "max_response_bytes": 8388608, "disable_redirects": true},
+  "limits": {"timeout": "30s", "max_response_bytes": 8388608},
   "retry": {"attempts": 1, "retry_on": []}
 }

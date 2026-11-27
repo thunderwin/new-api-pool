@@ -215,7 +215,7 @@ Capability 凭证值只写进服务器 `.env`：
 | `CAPABILITY_BRIGHTDATA_API_KEY` | Bright Data Web Unlocker Bearer API key | **是** |
 | `CAPABILITY_BRIGHTDATA_ZONE` | Web Unlocker zone 名，必须是 Bright Data 账户里真实存在的 zone；生产值为 `web_unlocker2`（2026-10-28 核实） | 否 |
 | `CAPABILITY_AISA_API_KEY` | AISA 搜索/SEO 数据 API Bearer API key（2026-10-29 服务器 `.env` 与重建后的容器内均已设置） | **是** |
-| `TIKHUB_API_KEY` | TikHub Bearer API key，供 `douyin-search-v1` 使用（已实现，待部署） | **是** |
+| `CAPABILITY_TIKHUB_API_KEY` | TikHub Bearer API key，供 `douyin-search-v1` 使用（已实现，待部署） | **是** |
 | `CAPABILITY_DEEPSEEK_API_KEY` | DeepSeek Search Bearer API key（2026-11-04 起供 `web-search-v1` 使用） | **是** |
 | `CAPABILITY_DATAFORSEO_LOGIN` | DataForSEO API login，供三个直连关键词能力使用 | **是** |
 | `CAPABILITY_DATAFORSEO_PASSWORD` | DataForSEO API password，供三个直连关键词能力使用 | **是** |
@@ -242,7 +242,7 @@ cd /path/to/new-api-pool
 ./ops/deploy/set-capability-secret.sh
 ./ops/deploy/set-capability-secret.sh CAPABILITY_AISA_API_KEY
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DEEPSEEK_API_KEY
-./ops/deploy/set-capability-secret.sh TIKHUB_API_KEY
+./ops/deploy/set-capability-secret.sh CAPABILITY_TIKHUB_API_KEY
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_LOGIN
 ./ops/deploy/set-capability-secret.sh CAPABILITY_DATAFORSEO_PASSWORD
 ./ops/deploy/set-capability-secret.sh CAPABILITY_RELAY_SELF_KEY
@@ -336,7 +336,7 @@ install -m 0755 "$(find x -name rclone -type f | head -1)" /usr/local/bin/rclone
 | `ops/deploy/gen-env.sh` | 在服务器本地生成 `.env`（PG/Redis 密码、SESSION_SECRET、CRYPTO_SECRET） |
 | `ops/deploy/backup.sh` | 每日 pg_dump + 自检 + 清理 + 可选 rclone |
 | `ops/deploy/setup-rclone.sh` | 交互式配置 rclone → R2（`read -s` 读密钥，不落 shell history），写配置并做连通自检 |
-| `ops/deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量或 `TIKHUB_API_KEY`（默认 Bright Data key），经 SSH stdin 传输并重建后端容器 |
+| `ops/deploy/set-capability-secret.sh` | 交互式设置任意 `CAPABILITY_*` 变量（默认 Bright Data key），经 SSH stdin 传输并重建后端容器 |
 
 > `ops/` 在**仓库里**（`<REPO>/ops/`）。早前它在仓库外层，
 > 导致别人克隆公开仓库后照着本文找不到脚本 —— 2026-10-10 已移入仓库，

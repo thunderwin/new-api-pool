@@ -4,7 +4,7 @@
 # Usage:
 #   ./set-capability-secret.sh
 #   ./set-capability-secret.sh CAPABILITY_AISA_API_KEY
-#   ./set-capability-secret.sh TIKHUB_API_KEY
+#   ./set-capability-secret.sh CAPABILITY_TIKHUB_API_KEY
 #   ./set-capability-secret.sh CAPABILITY_AISA_API_KEY --dry-run
 #   ./set-capability-secret.sh --dry-run
 #
@@ -27,8 +27,8 @@ for arg in "$@"; do
 		dry_run=1
 		;;
 	*)
-		if [[ ! "$arg" =~ ^CAPABILITY_[A-Z0-9_]+$ && "$arg" != TIKHUB_API_KEY ]]; then
-			echo "变量名必须匹配 ^CAPABILITY_[A-Z0-9_]+$ 或为 TIKHUB_API_KEY" >&2
+		if [[ ! "$arg" =~ ^CAPABILITY_[A-Z0-9_]+$ ]]; then
+			echo "变量名必须匹配 ^CAPABILITY_[A-Z0-9_]+$" >&2
 			exit 2
 		fi
 		secret_name="$arg"
@@ -40,7 +40,7 @@ remote_script=$(cat <<'REMOTE_SCRIPT'
 set -euo pipefail
 cd "$REMOTE_DIR"
 
-if [[ ! "${CAPABILITY_SECRET_NAME:-}" =~ ^CAPABILITY_[A-Z0-9_]+$ && "${CAPABILITY_SECRET_NAME:-}" != TIKHUB_API_KEY ]]; then
+if [[ ! "${CAPABILITY_SECRET_NAME:-}" =~ ^CAPABILITY_[A-Z0-9_]+$ ]]; then
 	echo "未设置"
 	exit 1
 fi
@@ -111,7 +111,7 @@ if ((dry_run == 1)); then
 set -euo pipefail
 if [[ "${1:-}" == "compose" && "${2:-}" == "exec" ]]; then
 	last_arg="${@: -1}"
-	name=$(printf '%s\n' "$last_arg" | sed -n 's/.*${\([A-Z0-9_]*\)}.*/\1/p')
+	name=$(printf '%s\n' "$last_arg" | sed -n 's/.*${\(CAPABILITY_[A-Z0-9_]*\)}.*/\1/p')
 	[[ -n "$name" ]] && grep -q "^${name}=." .env
 fi
 FAKE_DOCKER

@@ -198,7 +198,7 @@ func ValidateSync(m *Manifest, input map[string]any) *ExecutionError {
 	return validateEnvironment(m)
 }
 
-func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempotencyKey string) (result *SyncResult, execErr *ExecutionError) {
+func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempotencyKey string) (*SyncResult, *ExecutionError) {
 	if execErr := ValidateSync(m, input); execErr != nil {
 		return nil, execErr
 	}
@@ -230,19 +230,11 @@ func ExecuteSync(ctx context.Context, m *Manifest, input map[string]any, idempot
 		spec.consts = m.Request.Consts
 		spec.env = m.Request.Env
 	}
-	adapter, hasAdapter := httpSyncAdapters[m.HTTPAdapter]
-	if hasAdapter {
-		finish, err := adapter.guard.enter()
-		if err != nil {
-			return nil, err
-		}
-		defer func() { finish(execErr) }()
-	}
 	raw, headers, statusCode, upstreamID, execErr := doRequest(ctx, m, spec, input)
 	if execErr != nil {
 		return nil, execErr
 	}
-	if hasAdapter {
+	if adapter, ok := httpSyncAdapters[m.HTTPAdapter]; ok {
 		var secret string
 		if m.Auth != nil {
 			secret = os.Getenv(m.Auth.SecretRef)
@@ -576,9 +568,6 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 
 	client := &http.Client{
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
-			if m.Limits.DisableRedirects {
-				return http.ErrUseLastResponse
-			}
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
 			}
@@ -646,9 +635,6 @@ func doRequest(ctx context.Context, m *Manifest, spec httpSpec, input map[string
 		}
 		headers := resp.Header.Clone()
 		upstreamID := responseRequestID(headers)
-		if secret, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer "); ok && secret != "" && strings.Contains(upstreamID, secret) {
-			upstreamID = ""
-		}
 		limited := io.LimitReader(resp.Body, maxBytes+1)
 		rawBody, readErr := io.ReadAll(limited)
 		_ = resp.Body.Close()

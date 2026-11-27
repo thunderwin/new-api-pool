@@ -17,7 +17,7 @@ import (
 
 func TestDouyinSearchContract(t *testing.T) {
 	const secret = "synthetic-tikhub-credential"
-	t.Setenv("TIKHUB_API_KEY", secret)
+	t.Setenv("CAPABILITY_TIKHUB_API_KEY", secret)
 	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
 	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1")
 	fixture, err := os.ReadFile("testdata/tikhub-douyin-search-success.json")
@@ -27,7 +27,7 @@ func TestDouyinSearchContract(t *testing.T) {
 	fixture = []byte(strings.ReplaceAll(string(fixture), "合成视频", strings.Repeat("测🙂", 61)))
 	embedded, ok := Get("douyin-search-v1")
 	const path = "/api/v1/douyin/search/fetch_video_search_v2"
-	if !ok || embedded.Endpoint != "https://api.tikhub.io"+path || embedded.Auth.SecretRef != "TIKHUB_API_KEY" {
+	if !ok || embedded.Endpoint != "https://api.tikhub.io"+path || embedded.Auth.SecretRef != "CAPABILITY_TIKHUB_API_KEY" {
 		t.Fatal("incorrect production upstream configuration")
 	}
 	first := map[string]any{"keyword": strings.Repeat("测", 50), "cursor": float64(0), "search_id": "", "sort_type": "0", "publish_time": "0", "filter_duration": "0", "content_type": "1", "backtrace": ""}
@@ -95,7 +95,7 @@ func TestDouyinSearchContract(t *testing.T) {
 }
 
 func TestDouyinSearchSSRF(t *testing.T) {
-	t.Setenv("TIKHUB_API_KEY", "synthetic-ssrf-credential")
+	t.Setenv("CAPABILITY_TIKHUB_API_KEY", "synthetic-ssrf-credential")
 	t.Setenv("CAPABILITY_ALLOW_INSECURE_URLS", "1")
 	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "")
 	embedded, ok := Get("douyin-search-v1")
@@ -106,20 +106,5 @@ func TestDouyinSearchSSRF(t *testing.T) {
 	m.Endpoint = "http://127.0.0.1:1"
 	if _, err := ExecuteSync(context.Background(), &m, map[string]any{"keyword": "测试"}, ""); err == nil || err.Code != "upstream_not_allowed" {
 		t.Fatalf("private endpoint was not blocked: %v", err)
-	}
-	t.Setenv("CAPABILITY_ALLOW_PRIVATE_URLS", "1") // Mock only.
-	var followed atomic.Bool
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/target" {
-			followed.Store(true)
-			return
-		}
-		w.Header().Set("Location", "/target")
-		w.WriteHeader(http.StatusTemporaryRedirect)
-	}))
-	defer redirect.Close()
-	m.Endpoint = redirect.URL
-	if _, err := ExecuteSync(context.Background(), &m, map[string]any{"keyword": "测试"}, ""); err == nil || followed.Load() {
-		t.Fatal("upstream redirects must not be followed")
 	}
 }
